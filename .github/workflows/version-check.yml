@@ -2,7 +2,7 @@ name: Version check
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
     branches: [main]
 
 permissions:
