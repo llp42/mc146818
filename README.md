@@ -14,6 +14,37 @@ A `no_std` driver for the MC146818 real-time clock and its battery-backed memory
 The chip is reached through a `Bus` the caller implements (on PCs, I/O ports `0x70` and `0x71`), so the crate has no
 dependencies, contains no `unsafe` code and its tests run on the host.
 
+## Example
+
+Reading the time at boot on a PC, where the port accesses are left out:
+
+```rust
+use mc146818::{Bus, Century, Rtc};
+
+/// The chip behind I/O ports 0x70 (index) and 0x71 (data).
+struct Cmos;
+
+impl Bus for Cmos {
+    fn read(&mut self, register: u8) -> u8 {
+        // outb(0x70, register); inb(0x71)
+        todo!()
+    }
+
+    fn write(&mut self, register: u8, value: u8) {
+        // outb(0x70, register); outb(0x71, value)
+        todo!()
+    }
+}
+
+/// Seconds since 1970 for a clock kept in UTC, given the `CENTURY` field of the ACPI FADT.
+fn boot_time(fadt_century: u8) -> Result<i64, mc146818::Error> {
+    let mut rtc = Rtc::new(Cmos);
+    // The field is 0 if there is no century register: the years are then taken to be 2000 to 2099.
+    let century = Century::register(fadt_century).unwrap_or(Century::window(2000));
+    Ok(rtc.date_time(century)?.unix_timestamp())
+}
+```
+
 ## Left to the firmware
 
 The firmware normally sets up the following before the kernel runs. The driver leaves each as it finds it and offers

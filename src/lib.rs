@@ -85,6 +85,11 @@ mod mode;
 mod rate;
 mod register;
 
+// The README's example, compiled as a doctest.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
 use core::hint::spin_loop;
 use core::ops::Range;
 
