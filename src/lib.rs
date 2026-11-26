@@ -336,6 +336,21 @@ impl<B: Bus> Rtc<B> {
         self.bus.write(register, value);
     }
 
+    /// Fills `buf` from consecutive battery-backed registers, `start` first,
+    /// numbered as for [`Self::read_cmos`].
+    ///
+    /// # Panics
+    ///
+    /// If the registers `start..start + buf.len()` do not lie in [`NVRAM`],
+    /// before any is read. They are bounded as a subslice is: an empty `buf`
+    /// reads nothing, and `start` may then be `NVRAM.end` too.
+    pub fn read_cmos_into(&mut self, start: u8, buf: &mut [u8]) {
+        check_nvram_range(start, buf.len());
+        for (byte, register) in buf.iter_mut().zip(start..) {
+            *byte = self.bus.read(register);
+        }
+    }
+
     fn read(&mut self, register: Register) -> u8 {
         self.bus.read(register as u8)
     }
@@ -411,8 +426,19 @@ fn check_nvram(register: u8) {
     );
 }
 
+fn check_nvram_range(start: u8, len: usize) {
+    // A slice holds at most `isize::MAX` bytes, so this cannot overflow.
+    let end = usize::from(start) + len;
+    assert!(
+        NVRAM.start <= start && end <= usize::from(NVRAM.end),
+        "registers {start:#04x}..{end:#04x} run outside NVRAM"
+    );
+}
+
 #[cfg(test)]
 mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
     use super::{
         Alarm, Century, DateTime, Error, Interrupts, NVRAM, PeriodicRate, Rtc, SECOND_TRIES,
         UPDATE_TRIES,
@@ -783,6 +809,82 @@ mod tests {
     #[should_panic(expected = "0x80 is outside NVRAM")]
     fn write_cmos_above_nvram() {
         Rtc::new(Fake::new(0)).write_cmos(0x80, 0);
+    }
+
+    /// A chip whose NVRAM registers each hold their number, inverted so that
+    /// none holds 0.
+    fn numbered_nvram() -> Fake {
+        let mut fake = Fake::new(0);
+        for register in NVRAM {
+            fake.registers[usize::from(register)] = !register;
+        }
+        fake
+    }
+
+    #[test]
+    fn read_cmos_into() {
+        // The whole of NVRAM, then two registers at each end and one at the
+        // last, each read once and in order.
+        for (start, len) in [(0x0e, NVRAM.len()), (0x0e, 2), (0x7e, 2), (0x7f, 1)] {
+            let mut fake = numbered_nvram();
+            let mut buf = vec![0; len];
+            Rtc::new(&mut fake).read_cmos_into(start, &mut buf);
+            let registers: Vec<u8> = (start..).take(len).collect();
+            let expected: Vec<u8> = registers.iter().map(|register| !register).collect();
+            assert_eq!(buf, expected, "{start:#04x}");
+            assert_eq!(fake.reads, registers, "{start:#04x}");
+        }
+    }
+
+    #[test]
+    fn read_cmos_into_nothing() {
+        // As with a subslice, an empty one may start at either end.
+        for start in [0x0e, 0x7f, 0x80] {
+            let mut fake = numbered_nvram();
+            Rtc::new(&mut fake).read_cmos_into(start, &mut []);
+            assert_eq!(fake.reads, [], "{start:#04x}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "registers 0x0d..0x0f run outside NVRAM")]
+    fn read_cmos_into_below_nvram() {
+        Rtc::new(Fake::new(0)).read_cmos_into(0x0d, &mut [0; 2]);
+    }
+
+    #[test]
+    #[should_panic(expected = "registers 0x7f..0x81 run outside NVRAM")]
+    fn read_cmos_into_above_nvram() {
+        Rtc::new(Fake::new(0)).read_cmos_into(0x7f, &mut [0; 2]);
+    }
+
+    /// Ranges that start, end or lie outside NVRAM, some of them empty.
+    const OUTSIDE_NVRAM: [(u8, usize); 9] = [
+        (0x0d, 0),
+        (0x0d, 1),
+        (0x0d, 0x73),
+        (0x00, 0x0e),
+        (0x0e, 0x73),
+        (0x7f, 2),
+        (0x80, 1),
+        (0x81, 0),
+        (0xff, 1),
+    ];
+
+    #[test]
+    fn read_cmos_into_outside_nvram_reads_nothing() {
+        // The whole range is checked first, so no byte is read, nor filled,
+        // before the panic.
+        for (start, len) in OUTSIDE_NVRAM {
+            let mut fake = numbered_nvram();
+            let mut buf = vec![0x55; len];
+            let read = catch_unwind(AssertUnwindSafe(|| {
+                Rtc::new(&mut fake).read_cmos_into(start, &mut buf);
+            }));
+            assert!(read.is_err(), "{start:#04x} {len}");
+            assert_eq!(fake.reads, [], "{start:#04x} {len}");
+            assert_eq!(buf, vec![0x55; len], "{start:#04x} {len}");
+        }
     }
 
     #[test]
