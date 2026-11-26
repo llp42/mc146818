@@ -4,9 +4,8 @@
 
 //! Dates, and the century the chip keeps them in.
 
-use crate::Error;
 use crate::mode::Mode;
-use crate::register::Nvram;
+use crate::{Error, NVRAM};
 
 /// A Gregorian date and time from year 0 to 9999. The chip keeps no time zone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -167,8 +166,8 @@ enum Source {
 
 impl Century {
     /// Kept in battery-backed register `index`, as the ACPI FADT `CENTURY`
-    /// field gives it. `None` unless `index` is such a register; the field's
-    /// 0 means there is none.
+    /// field gives it. `None` unless `index` is in [`NVRAM`]; the field's 0
+    /// means there is none.
     ///
     /// The register keeps years from 1900 on. As in Linux, a century below 19
     /// is taken for a register lost or never kept, so reading one fails with
@@ -176,7 +175,7 @@ impl Century {
     /// [`Error::YearOutOfRange`].
     #[must_use]
     pub const fn register(index: u8) -> Option<Self> {
-        if matches!(index, Nvram::START..Nvram::END) {
+        if NVRAM.start <= index && index < NVRAM.end {
             Some(Self(Source::Register(index)))
         } else {
             None
@@ -269,9 +268,9 @@ const fn two_digits(value: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{Century, DateTime, Raw, Weekday, days_in_month};
-    use crate::Error;
     use crate::mode::Mode;
     use crate::register::StatusB;
+    use crate::{Error, NVRAM};
 
     #[test]
     fn weekday() {
@@ -349,6 +348,12 @@ mod tests {
         assert_eq!(Century::register(0x0d), None);
         assert_eq!(Century::register(0x80), None);
         assert_eq!(Century::register(0x32).and_then(Century::index), Some(0x32));
+        // The same registers as the rest of NVRAM.
+        for index in 0..=u8::MAX {
+            let century = Century::register(index);
+            assert_eq!(century.is_some(), NVRAM.contains(&index), "{index:#04x}");
+            assert_eq!(century.and_then(Century::index), century.map(|_| index));
+        }
     }
 
     #[test]

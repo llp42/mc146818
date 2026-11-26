@@ -76,6 +76,7 @@ mod rate;
 mod register;
 
 use core::hint::spin_loop;
+use core::ops::Range;
 
 pub use alarm::Alarm;
 pub use date_time::{Century, DateTime, Weekday};
@@ -85,7 +86,7 @@ pub use rate::PeriodicRate;
 
 use date_time::Raw;
 use mode::Mode;
-use register::{Nvram, Register, StatusA, StatusB, StatusD};
+use register::{Register, StatusA, StatusB, StatusD};
 
 /// The waits count reads, for want of a timer, and take none to be quicker
 /// than this many nanoseconds: a hundredth of the original part's 953 ns bus
@@ -134,6 +135,11 @@ impl<B: Bus + ?Sized> Bus for &mut B {
     }
 }
 
+/// The battery-backed bytes after the clock registers, by register number:
+/// `0x0e` to `0x7f`, as on PCs. The firmware owns most of them and checksums
+/// some.
+pub const NVRAM: Range<u8> = 0x0e..0x80;
+
 /// The clock, reached through `B`.
 #[derive(Debug)]
 pub struct Rtc<B> {
@@ -141,10 +147,6 @@ pub struct Rtc<B> {
 }
 
 impl<B: Bus> Rtc<B> {
-    /// Battery-backed bytes after the clock registers, as on PCs. The firmware
-    /// owns most of them and checksums some.
-    pub const NVRAM_LEN: u8 = Nvram::END - Nvram::START;
-
     /// The clock behind `bus`.
     pub const fn new(bus: B) -> Self {
         Self { bus }
@@ -302,32 +304,31 @@ impl<B: Bus> Rtc<B> {
         Alarm::decode(raw, mode).ok_or(Error::InvalidContents)
     }
 
-    /// The battery-backed byte at `offset`.
+    /// The battery-backed byte in `register`, numbered as for [`Bus`] and
+    /// [`Century::register`].
     ///
     /// # Panics
     ///
-    /// If `offset` is not below [`Self::NVRAM_LEN`].
-    pub fn read_nvram(&mut self, offset: u8) -> u8 {
-        let register = Self::nvram_register(offset);
+    /// If `register` is outside [`NVRAM`].
+    pub fn read_cmos(&mut self, register: u8) -> u8 {
+        check_nvram(register);
         self.bus.read(register)
     }
 
-    /// Writes the battery-backed byte at `offset`.
+    /// Writes the battery-backed byte in `register`, numbered as for
+    /// [`Self::read_cmos`].
+    ///
+    /// It can overwrite bytes the firmware owns, such as the century
+    /// register, the ACPI alarm registers and the checksummed bytes; a
+    /// checksummed byte changed without its checksum may make the firmware
+    /// reset its settings at the next boot.
     ///
     /// # Panics
     ///
-    /// If `offset` is not below [`Self::NVRAM_LEN`].
-    pub fn write_nvram(&mut self, offset: u8, value: u8) {
-        let register = Self::nvram_register(offset);
+    /// If `register` is outside [`NVRAM`].
+    pub fn write_cmos(&mut self, register: u8, value: u8) {
+        check_nvram(register);
         self.bus.write(register, value);
-    }
-
-    fn nvram_register(offset: u8) -> u8 {
-        assert!(
-            offset < Self::NVRAM_LEN,
-            "NVRAM offset {offset} out of range"
-        );
-        Nvram::START + offset
     }
 
     fn read(&mut self, register: Register) -> u8 {
@@ -398,10 +399,18 @@ impl<B: Bus> Rtc<B> {
     }
 }
 
+fn check_nvram(register: u8) {
+    assert!(
+        NVRAM.contains(&register),
+        "register {register:#04x} is outside NVRAM"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Alarm, Century, DateTime, Error, Interrupts, PeriodicRate, Rtc, SECOND_TRIES, UPDATE_TRIES,
+        Alarm, Century, DateTime, Error, Interrupts, NVRAM, PeriodicRate, Rtc, SECOND_TRIES,
+        UPDATE_TRIES,
     };
     use crate::fake::{Fake, Missing};
     use crate::register::{Register, StatusB};
@@ -710,20 +719,46 @@ mod tests {
     }
 
     #[test]
-    fn nvram() {
+    fn cmos() {
+        // Registers 0x0e and 0x7f, the first and last after the clock's on a
+        // PC, are reached as they are numbered.
+        assert_eq!(NVRAM, 0x0e..0x80);
         let mut fake = Fake::new(0);
+        fake.registers[0x0e] = 0x11;
+        fake.registers[0x7f] = 0x22;
         let mut rtc = Rtc::new(&mut fake);
-        rtc.write_nvram(0, 0xaa);
-        rtc.write_nvram(Rtc::<Fake>::NVRAM_LEN - 1, 0xbb);
-        assert_eq!(rtc.read_nvram(0), 0xaa);
+        assert_eq!(rtc.read_cmos(0x0e), 0x11);
+        assert_eq!(rtc.read_cmos(0x7f), 0x22);
+        rtc.write_cmos(0x0e, 0xaa);
+        rtc.write_cmos(0x7f, 0xbb);
+        assert_eq!(rtc.read_cmos(0x0e), 0xaa);
         assert_eq!(fake.registers[0x0e], 0xaa);
         assert_eq!(fake.registers[0x7f], 0xbb);
+        assert_eq!(fake.writes, [(0x0e, 0xaa), (0x7f, 0xbb)]);
     }
 
     #[test]
-    #[should_panic(expected = "out of range")]
-    fn nvram_bounds() {
-        Rtc::new(Fake::new(0)).read_nvram(Rtc::<Fake>::NVRAM_LEN);
+    #[should_panic(expected = "0x0d is outside NVRAM")]
+    fn read_cmos_below_nvram() {
+        let _ = Rtc::new(Fake::new(0)).read_cmos(0x0d);
+    }
+
+    #[test]
+    #[should_panic(expected = "0x80 is outside NVRAM")]
+    fn read_cmos_above_nvram() {
+        let _ = Rtc::new(Fake::new(0)).read_cmos(0x80);
+    }
+
+    #[test]
+    #[should_panic(expected = "0x0d is outside NVRAM")]
+    fn write_cmos_below_nvram() {
+        Rtc::new(Fake::new(0)).write_cmos(0x0d, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "0x80 is outside NVRAM")]
+    fn write_cmos_above_nvram() {
+        Rtc::new(Fake::new(0)).write_cmos(0x80, 0);
     }
 
     #[test]

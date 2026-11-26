@@ -52,11 +52,3 @@ impl StatusD {
     /// Cleared once the battery runs down.
     pub const VALID: u8 = 0x80;
 }
-
-/// Battery-backed memory: registers `START..END`.
-pub struct Nvram;
-
-impl Nvram {
-    pub const START: u8 = 0x0e;
-    pub const END: u8 = 0x80;
-}
