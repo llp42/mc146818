@@ -73,6 +73,25 @@ What chips and chipsets add beyond the MC146818, but for the century:
   its place, while these alarms only let an alarm be more than a day away.
 - Extended memory, such as the second 128 bytes some chipsets reach through ports `0x72` and `0x73`.
 
+## Development
+
+CI runs these checks on each PR, with these flags:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo build --locked --target x86_64-unknown-none
+```
+
+`Cargo.toml` only warns on its lints, `missing_docs` and Clippy's pedantic and nursery groups, so that a newer
+toolchain, on docs.rs or with the crate as a path dependency, only warns too. CI denies every warning, through the
+`-D warnings` above, on the toolchain pinned in `.github/actions/setup-rust`. The last check needs its target:
+`rustup target add x86_64-unknown-none`.
+
+CI also packages the crate, builds the library on Rust 1.87 and lints the Markdown with markdownlint-cli2.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
