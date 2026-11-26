@@ -114,6 +114,30 @@ impl DateTime {
             _ => Weekday::Saturday,
         }
     }
+
+    /// Seconds since 1970-01-01 00:00:00 UTC, negative before, taking `self`
+    /// as UTC. The chip keeps whatever time the machine was set to, often
+    /// local time on PCs that also boot Windows; for such a clock, subtract
+    /// the zone's UTC offset from the result.
+    #[must_use]
+    pub const fn unix_timestamp(self) -> i64 {
+        let seconds = self.hour as i64 * 3600 + self.minute as i64 * 60 + self.second as i64;
+        days_from_civil(self.year, self.month, self.day) * SECONDS_PER_DAY + seconds
+    }
+
+    /// The UTC date and time `timestamp` seconds after 1970-01-01 00:00:00
+    /// UTC, before it if negative; `None` outside year 0 to 9999, which is
+    /// `-62_167_219_200` to `253_402_300_799`. For a clock kept in local
+    /// time, add the zone's UTC offset to `timestamp` first.
+    #[must_use]
+    pub const fn from_unix_timestamp(timestamp: i64) -> Option<Self> {
+        if !matches!(timestamp, FIRST_TIMESTAMP..=LAST_TIMESTAMP) {
+            return None;
+        }
+        let (year, month, day) = civil_from_days(timestamp.div_euclid(SECONDS_PER_DAY));
+        let (hour, minute, second) = time_of_day(timestamp.rem_euclid(SECONDS_PER_DAY));
+        Self::new(year, month, day, hour, minute, second)
+    }
 }
 
 /// A day of the week.
@@ -154,6 +178,74 @@ const fn days_in_month(year: u16, month: u8) -> u8 {
 
 const fn is_leap(year: u16) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+}
+
+/// 0000-01-01 00:00:00 as a Unix timestamp.
+const FIRST_TIMESTAMP: i64 = -62_167_219_200;
+
+/// 9999-12-31 23:59:59 as a Unix timestamp.
+const LAST_TIMESTAMP: i64 = 253_402_300_799;
+
+/// Unix time counts no leap seconds, and [`DateTime`] has no second 60.
+const SECONDS_PER_DAY: i64 = 86_400;
+
+/// The Gregorian calendar repeats every 400 years, an era.
+const DAYS_PER_ERA: i64 = 146_097;
+
+/// From 0000-03-01, where an era starts, to 1970-01-01.
+const DAYS_TO_1970: i64 = 719_468;
+
+/// Days since 1970-01-01, by Howard Hinnant's `days_from_civil`
+/// (<https://howardhinnant.github.io/date_algorithms.html>). Years start in
+/// March, so that the leap day ends them.
+const fn days_from_civil(year: u16, month: u8, day: u8) -> i64 {
+    let year = year as i64 - (month < 3) as i64;
+    let era = year.div_euclid(400);
+    let year_of_era = year.rem_euclid(400);
+    // 0 for March to 11 for February.
+    let month = (month as i64 + 9) % 12;
+    let day_of_year = (153 * month + 2) / 5 + day as i64 - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * DAYS_PER_ERA + day_of_era - DAYS_TO_1970
+}
+
+/// The year, month and day `days` after 1970-01-01, by Hinnant's
+/// `civil_from_days`, the inverse of [`days_from_civil`], for a day in year
+/// 0 to 9999.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "year 0 to 9999, month 1 to 12 and day 1 to 31"
+)]
+const fn civil_from_days(days: i64) -> (u16, u8, u8) {
+    let days = days + DAYS_TO_1970;
+    let era = days.div_euclid(DAYS_PER_ERA);
+    let day_of_era = days.rem_euclid(DAYS_PER_ERA);
+    // With the leap days so far taken out, each year is 365 days.
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    // 0 for March to 11 for February.
+    let month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month + 2) / 5 + 1;
+    let month = if month < 10 { month + 3 } else { month - 9 };
+    let year = era * 400 + year_of_era + (month < 3) as i64;
+    (year as u16, month as u8, day as u8)
+}
+
+/// The hour, minute and second `seconds` after midnight, for less than a
+/// day.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "hour 0 to 23, minute and second 0 to 59"
+)]
+const fn time_of_day(seconds: i64) -> (u8, u8, u8) {
+    (
+        (seconds / 3600) as u8,
+        (seconds / 60 % 60) as u8,
+        (seconds % 60) as u8,
+    )
 }
 
 /// Where the century of the chip's two-digit year comes from.
@@ -314,6 +406,68 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn unix_timestamp() {
+        // As `date -u -d @<timestamp>` gives them.
+        for ((year, month, day, hour, minute, second), timestamp) in [
+            ((1970, 1, 1, 0, 0, 0), 0),
+            ((1969, 12, 31, 23, 59, 59), -1),
+            ((2026, 11, 26, 13, 5, 9), 1_795_698_309),
+            ((2000, 2, 29, 0, 0, 0), 951_782_400),
+            ((1900, 3, 1, 0, 0, 0), -2_203_891_200),
+            ((0, 1, 1, 0, 0, 0), -62_167_219_200),
+            ((9999, 12, 31, 23, 59, 59), 253_402_300_799),
+        ] {
+            let date_time = DateTime::new(year, month, day, hour, minute, second).unwrap();
+            assert_eq!(date_time.unix_timestamp(), timestamp, "{date_time:?}");
+            assert_eq!(
+                DateTime::from_unix_timestamp(timestamp),
+                Some(date_time),
+                "{timestamp}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_timestamp_range() {
+        for timestamp in [i64::MIN, -62_167_219_201, 253_402_300_800, i64::MAX] {
+            assert_eq!(
+                DateTime::from_unix_timestamp(timestamp),
+                None,
+                "{timestamp}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_timestamp_every_day() {
+        // Day by day from year 0 to 9999, each 86_400 seconds after the last,
+        // at the first and last second.
+        let check = |date_time: Option<DateTime>, timestamp| {
+            let date_time = date_time.unwrap();
+            assert_eq!(date_time.unix_timestamp(), timestamp, "{date_time:?}");
+            assert_eq!(
+                DateTime::from_unix_timestamp(timestamp),
+                Some(date_time),
+                "{timestamp}"
+            );
+        };
+        let mut midnight = -62_167_219_200;
+        for year in 0..=9999 {
+            for month in 1..=12 {
+                for day in 1..=days_in_month(year, month) {
+                    check(DateTime::new(year, month, day, 0, 0, 0), midnight);
+                    check(
+                        DateTime::new(year, month, day, 23, 59, 59),
+                        midnight + 86_399,
+                    );
+                    midnight += 86_400;
+                }
+            }
+        }
+        assert_eq!(midnight, 253_402_300_800);
     }
 
     #[test]
