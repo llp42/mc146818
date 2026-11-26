@@ -11,8 +11,11 @@ use core::fmt;
 #[non_exhaustive]
 pub enum Error {
     /// The chip seemed to stay in an update, as it does when none is there,
-    /// or the next second never came, as when the clock is halted.
+    /// or the next second never came.
     NotResponding,
+    /// The clock is halted: SET is set, or the divider chain is held in
+    /// reset.
+    Halted,
     /// The registers hold no valid date, time or alarm.
     InvalidContents,
     /// The year lies outside what the [`Century`](crate::Century) in use can
@@ -24,6 +27,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::NotResponding => "the clock did not respond",
+            Self::Halted => "the clock is halted",
             Self::InvalidContents => "the clock holds no valid value",
             Self::YearOutOfRange => "year outside the century's range",
         })
@@ -42,6 +46,7 @@ mod tests {
             Error::NotResponding.to_string(),
             "the clock did not respond"
         );
+        assert_eq!(Error::Halted.to_string(), "the clock is halted");
         assert_eq!(
             Error::InvalidContents.to_string(),
             "the clock holds no valid value"

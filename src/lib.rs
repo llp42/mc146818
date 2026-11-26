@@ -101,7 +101,9 @@ const MAX_UPDATE_NS: u32 = 244_000 + 1_984_000;
 const UPDATE_TRIES: u32 = MAX_UPDATE_NS / MIN_READ_NS;
 
 /// Tries at the next second, up to a second and an update away, counted as
-/// [`UPDATE_TRIES`] are. On a PC, a halted clock fails after minutes.
+/// [`UPDATE_TRIES`] are. A last resort for a clock that stops with nothing in
+/// status A or B to show it, as when the oscillator fails; on a PC, giving up
+/// then takes minutes.
 #[cfg(not(test))]
 const SECOND_TRIES: u32 = (1_000_000_000 + MAX_UPDATE_NS) / MIN_READ_NS;
 
@@ -162,11 +164,17 @@ impl<B: Bus> Rtc<B> {
     ///
     /// # Errors
     ///
+    /// [`Error::Halted`] if SET is set or the divider chain is held in reset.
     /// [`Error::NotResponding`] if the chip never leaves an update, or if the
-    /// seconds keep still, as they do while the clock is halted. With no timer
-    /// to go by, giving up on a halted clock takes minutes on a PC.
+    /// seconds keep still all the same, as when the oscillator has stopped;
+    /// with no timer to go by, giving up on that takes minutes on a PC.
     pub fn wait_for_next_second(&mut self) -> Result<(), Error> {
+        // After the first read, so that a missing chip, whose 0xff looks
+        // halted too, still fails as one.
         let first = self.between_updates(UPDATE_TRIES, |_, second| Some(second))?;
+        if self.is_halted() {
+            return Err(Error::Halted);
+        }
         self.between_updates(SECOND_TRIES, |_, second| (second != first).then_some(()))
     }
 
@@ -355,6 +363,12 @@ impl<B: Bus> Rtc<B> {
             spin_loop();
         }
         Err(Error::NotResponding)
+    }
+
+    /// Whether SET or the divider chain's reset keeps the clock from running.
+    fn is_halted(&mut self) -> bool {
+        self.read(Register::StatusB) & StatusB::SET != 0
+            || self.read(Register::StatusA) & StatusA::DIVIDER_RESET == StatusA::DIVIDER_RESET
     }
 
     /// Whether no update is in progress and the seconds still read `second`.
@@ -712,11 +726,12 @@ mod tests {
     fn next_second_skips_update() {
         // A stall after a read of status A that finds no update lets one
         // start before the seconds are read, which then read 0xff; that must
-        // not end the wait. Five reads find the first second, the update
-        // starts after the next read of status A, and the clock ticks in it.
+        // not end the wait. Five reads find the first second and two more
+        // find the clock running, the update starts after the next read of
+        // status A, and the clock ticks in it.
         let mut fake = Fake::new(0);
         fake.set(Register::Seconds, 0x41);
-        fake.update_after = Some((6, 2));
+        fake.update_after = Some((8, 2));
         fake.tick_after = Some((4, &[(Register::Seconds, 0x42)]));
         assert_eq!(Rtc::new(&mut fake).wait_for_next_second(), Ok(()));
         assert!(fake.update_after.is_none() && fake.tick_after.is_none());
@@ -728,7 +743,7 @@ mod tests {
         // The first second takes three reads of the seconds, and each try
         // that finds it again takes two more. A tick after every try but the
         // last still ends the wait; one after every try is too late, as if
-        // the clock were halted.
+        // the oscillator had stopped with nothing in status A or B to show it.
         for (reads, result) in [
             (2 * SECOND_TRIES, Ok(())),
             (2 * SECOND_TRIES + 2, Err(Error::NotResponding)),
@@ -738,5 +753,30 @@ mod tests {
             fake.tick_after = Some((reads, &[(Register::Seconds, 0x42)]));
             assert_eq!(Rtc::new(&mut fake).wait_for_next_second(), result);
         }
+    }
+
+    #[test]
+    fn next_second_halted() {
+        // Datasheet values: SET is 0x80 of status B, and DV2 to DV0 are 0x40,
+        // 0x20 and 0x10 of status A, which PCs set to 0x20. Either DV2 and DV1
+        // both set, which hold the divider in reset whatever DV0 says, or SET
+        // fails the wait at once.
+        for (status_a, status_b) in [(0x26, 0x82), (0x66, 0x02), (0x76, 0x02)] {
+            let mut fake = Fake::new(status_b);
+            fake.set(Register::StatusA, status_a);
+            fake.set(Register::Seconds, 0x41);
+            fake.tick_after = Some((5, &[(Register::Seconds, 0x42)]));
+            assert_eq!(
+                Rtc::new(&mut fake).wait_for_next_second(),
+                Err(Error::Halted)
+            );
+            assert!(fake.tick_after.is_some());
+        }
+        // DV0 next to DV1 alone is AMD's bank select on a running clock.
+        let mut fake = Fake::new(0x02);
+        fake.set(Register::StatusA, 0x36);
+        fake.set(Register::Seconds, 0x41);
+        fake.tick_after = Some((5, &[(Register::Seconds, 0x42)]));
+        assert_eq!(Rtc::new(&mut fake).wait_for_next_second(), Ok(()));
     }
 }

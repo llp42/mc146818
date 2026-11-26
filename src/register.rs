@@ -29,6 +29,9 @@ impl StatusA {
     /// Set from 244 µs before an update cycle until it ends; the clock
     /// registers are unreliable meanwhile.
     pub const UPDATE_IN_PROGRESS: u8 = 0x80;
+    /// DV2 and DV1, which hold the divider chain in reset when both are set.
+    /// DV0 is left out: on AMD it selects a bank instead.
+    pub const DIVIDER_RESET: u8 = 0x60;
     pub const RATE_SELECT: u8 = 0x0f;
 }
 
