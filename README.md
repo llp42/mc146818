@@ -14,7 +14,8 @@ A `no_std` driver for the MC146818 real-time clock and its battery-backed memory
 The chip is reached through a `Bus` the caller implements (on PCs, I/O ports `0x70` and `0x71`), so the crate has no
 dependencies, contains no `unsafe` code and its tests run on the host.
 
-The minimum supported Rust version is 1.87.
+The minimum supported Rust version is 1.87. [CHANGELOG.md](CHANGELOG.md) lists the changes in each release, and how to
+move to it from the one before.
 
 ## Example
 
