@@ -23,10 +23,11 @@ no way to change it:
 
 ## Not covered
 
-What chips and chipsets add beyond the MC146818:
+What chips and chipsets add beyond the MC146818, but for the century:
 
-- The date and month alarms ACPI describes (FADT `DAY_ALRM` and `MON_ALRM`), which let an alarm be more than a day
-  away.
+- The date and month alarms (ACPI FADT `DAY_ALRM` and `MON_ALRM`). The FADT gives their CMOS registers as it gives the
+  century's (`CENTURY`), which the driver takes: the two-digit year cannot be read without the century, or a window in
+  its place, while these alarms only let an alarm be more than a day away.
 - Extended memory, such as the second 128 bytes some chipsets reach through ports `0x72` and `0x73`.
 
 ## License

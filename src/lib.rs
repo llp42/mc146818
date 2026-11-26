@@ -60,9 +60,17 @@
 //! - The data mode, binary or BCD and 12- or 24-hour. The driver reads it from
 //!   status B on each access and follows it.
 //!
-//! Features that go beyond the MC146818, such as the date and month alarms
-//! ACPI describes or the extended memory some chipsets add, are not covered
-//! either.
+//! # Not covered
+//!
+//! The ACPI FADT gives the CMOS registers of three additions to the
+//! MC146818: the century (`CENTURY`) and the date and month alarms
+//! (`DAY_ALRM` and `MON_ALRM`). The driver takes the century, as
+//! [`Century::register`], since the two-digit year cannot be read without it
+//! or a window in its place. It leaves the alarms out: they only let an alarm
+//! be more than a day away.
+//!
+//! Nor does it cover the extended memory some chipsets add, such as the
+//! second 128 bytes behind ports `0x72` and `0x73`.
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
