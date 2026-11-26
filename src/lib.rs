@@ -332,6 +332,7 @@ mod tests {
         let mut rtc = Rtc::new(&mut fake);
         rtc.enable(Interrupts::PERIODIC | Interrupts::ALARM);
         rtc.disable(Interrupts::ALARM);
+        rtc.disable(Interrupts::UPDATE_ENDED);
         assert_eq!(rtc.enabled(), Interrupts::PERIODIC);
         assert_eq!(fake.get(Register::StatusB), StatusB::HOURS_24 | 0x40);
 

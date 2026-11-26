@@ -75,8 +75,13 @@ mod tests {
         let both = Interrupts::PERIODIC | Interrupts::ALARM;
         assert!(both.contains(Interrupts::PERIODIC));
         assert!(!both.contains(Interrupts::UPDATE_ENDED));
+        assert!(!Interrupts::PERIODIC.contains(both));
         assert!(Interrupts::ALL.contains(both));
         assert!(Interrupts::NONE.is_empty());
+        assert!(!Interrupts::ALARM.is_empty());
         assert_eq!(Interrupts::from_status(0xff), Interrupts::ALL);
+        let mut set = Interrupts::PERIODIC;
+        set |= Interrupts::ALARM;
+        assert_eq!(set, both);
     }
 }
