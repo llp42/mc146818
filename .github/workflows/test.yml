@@ -1,0 +1,22 @@
+name: Test
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: x86_64-unknown-none
+      - run: cargo test --locked
+      # The crate as cargo publish uploads it, built on its own, so that a release cannot fail at the upload.
+      - run: cargo package --locked
+      # no_std: a bare-metal target has no std to link.
+      - run: cargo build --locked --target x86_64-unknown-none
