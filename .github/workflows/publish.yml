@@ -46,6 +46,10 @@ jobs:
     runs-on: ubuntu-latest
     # Its protection rules gate the job, and crates.io can require it of the workflow that publishes.
     environment: release
+    # One publish at a time. A later one waits for the one before to tag, in order, and none is cancelled.
+    concurrency:
+      group: publish
+      queue: max
     permissions:
       # To push the tag.
       contents: write
