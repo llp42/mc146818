@@ -326,6 +326,30 @@ impl<B: Bus> Rtc<B> {
     ///
     /// [`Error::NotResponding`] if the chip never leaves an update; the alarm
     /// may then be left unset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # struct Cmos([u8; 128]);
+    /// # impl mc146818::Bus for Cmos {
+    /// #     fn read(&mut self, r: u8) -> u8 { self.0[usize::from(r)] }
+    /// #     fn write(&mut self, r: u8, v: u8) { self.0[usize::from(r)] = v }
+    /// # }
+    /// # fn main() -> Result<(), mc146818::Error> {
+    /// # let mut rtc = mc146818::Rtc::new(Cmos([0; 128]));
+    /// use mc146818::{Alarm, Interrupts};
+    ///
+    /// // At second 0 of every minute of every hour.
+    /// const ALARM: Alarm = Alarm::new(None, None, Some(0)).unwrap();
+    /// rtc.set_alarm(ALARM)?;
+    /// // Drops a stale flag, which would raise the interrupt at once.
+    /// rtc.acknowledge();
+    /// rtc.enable(Interrupts::ALARM);
+    /// # assert_eq!(rtc.alarm(), Ok(ALARM));
+    /// # assert_eq!(rtc.enabled(), Interrupts::ALARM);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_alarm(&mut self, alarm: Alarm) -> Result<(), Error> {
         let [hour, minute, second] = alarm.encode(self.mode());
         self.between_updates(UPDATE_TRIES, |rtc, _| {
