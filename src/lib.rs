@@ -34,6 +34,8 @@
 //! let now = rtc.date_time(Century::window(2000))?;
 //!
 //! rtc.set_periodic_rate(Some(PeriodicRate::from_hz(128).unwrap()));
+//! // Drops stale flags, which would raise the interrupt at once.
+//! rtc.acknowledge();
 //! rtc.enable(Interrupts::PERIODIC);
 //!
 //! // In the interrupt handler:
@@ -181,7 +183,9 @@ impl<B: Bus> Rtc<B> {
         PeriodicRate::from_select(self.read(Register::StatusA) & StatusA::RATE_SELECT)
     }
 
-    /// Lets `interrupts` raise the interrupt line.
+    /// Lets `interrupts` raise the interrupt line. Their flags are set whether
+    /// or not they are enabled, so a stale one raises it at once; call
+    /// [`Self::acknowledge`] first to drop them.
     pub fn enable(&mut self, interrupts: Interrupts) {
         let b = self.read(Register::StatusB);
         self.write(Register::StatusB, b | interrupts.bits());
