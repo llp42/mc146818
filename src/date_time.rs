@@ -276,7 +276,7 @@ const fn two_digits(value: u16) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Century, DateTime, Raw, Weekday, YearOutOfWindow};
+    use super::{Century, DateTime, Raw, Weekday, YearOutOfWindow, days_in_month};
     use crate::mode::Mode;
     use crate::register::StatusB;
 
@@ -295,9 +295,40 @@ mod tests {
     }
 
     #[test]
+    fn weekday_every_day() {
+        // Day by day from 2024-01-01, through a leap year and a common one.
+        let mut expected = Weekday::Monday as u8;
+        for year in [2024, 2025] {
+            for month in 1..=12 {
+                for day in 1..=days_in_month(year, month) {
+                    let date_time = DateTime::new(year, month, day, 0, 0, 0).unwrap();
+                    assert_eq!(date_time.weekday() as u8, expected, "{year}-{month}-{day}");
+                    expected = (expected + 1) % 7;
+                }
+            }
+        }
+    }
+
+    #[test]
     fn weekday_register() {
         assert_eq!(Weekday::Sunday.register(), 1);
         assert_eq!(Weekday::Saturday.register(), 7);
+    }
+
+    #[test]
+    fn accessors() {
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        assert_eq!(
+            (
+                date_time.year(),
+                date_time.month(),
+                date_time.day(),
+                date_time.hour(),
+                date_time.minute(),
+                date_time.second(),
+            ),
+            (2026, 11, 26, 13, 5, 9)
+        );
     }
 
     #[test]
@@ -311,6 +342,12 @@ mod tests {
         assert!(DateTime::new(2026, 1, 0, 0, 0, 0).is_none());
         assert!(DateTime::new(2026, 1, 1, 24, 0, 0).is_none());
         assert!(DateTime::new(10_000, 1, 1, 0, 0, 0).is_none());
+        assert!(DateTime::new(2026, 0, 1, 0, 0, 0).is_none());
+        assert!(DateTime::new(2026, 1, 1, 0, 60, 0).is_none());
+        assert!(DateTime::new(2026, 1, 1, 0, 0, 60).is_none());
+        for month in [6, 9, 11] {
+            assert!(DateTime::new(2026, month, 31, 0, 0, 0).is_none());
+        }
     }
 
     #[test]
@@ -337,6 +374,23 @@ mod tests {
     }
 
     #[test]
+    fn decode_invalid_century() {
+        let raw = Raw {
+            second: 0,
+            minute: 0,
+            hour: 0x12,
+            day: 1,
+            month: 1,
+            year: 0x26,
+            century: 0xff,
+        };
+        assert_eq!(
+            raw.decode(Mode::new(0), Century::register(0x32).unwrap()),
+            None
+        );
+    }
+
+    #[test]
     fn window() {
         let mode = Mode::new(StatusB::BINARY | StatusB::HOURS_24);
         let raw = |year| Raw {
@@ -357,11 +411,19 @@ mod tests {
             raw(79).decode(mode, since_1980).map(DateTime::year),
             Some(2079)
         );
-        let date_time = DateTime::new(2080, 1, 1, 0, 0, 0).unwrap();
-        assert_eq!(
-            Raw::encode(date_time, mode, since_1980),
-            Err(YearOutOfWindow)
-        );
+        let encode = |year| {
+            let date_time = DateTime::new(year, 1, 1, 0, 0, 0).unwrap();
+            Raw::encode(date_time, mode, since_1980).map(|raw| raw.year)
+        };
+        assert_eq!(encode(1979), Err(YearOutOfWindow));
+        assert_eq!(encode(1980), Ok(80));
+        assert_eq!(encode(2080), Err(YearOutOfWindow));
+    }
+
+    #[test]
+    #[should_panic(expected = "window must end")]
+    fn window_too_late() {
+        let _ = Century::window(9901);
     }
 
     #[test]
