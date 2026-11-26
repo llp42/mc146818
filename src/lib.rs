@@ -491,12 +491,11 @@ impl<B: Bus> Rtc<B> {
     ) -> Result<T, Error> {
         for _ in 0..tries {
             let second = self.read(Register::Seconds);
-            if self.is_steady(second) {
-                if let Some(value) = access(self, second) {
-                    if self.is_steady(second) {
-                        return Ok(value);
-                    }
-                }
+            if self.is_steady(second)
+                && let Some(value) = access(self, second)
+                && self.is_steady(second)
+            {
+                return Ok(value);
             }
             spin_loop();
         }

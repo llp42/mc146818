@@ -14,7 +14,7 @@ A `no_std` driver for the MC146818 real-time clock and its battery-backed memory
 The chip is reached through a `Bus` the caller implements (on PCs, I/O ports `0x70` and `0x71`), so the crate has no
 dependencies, contains no `unsafe` code and its tests run on the host.
 
-The minimum supported Rust version is 1.87. [CHANGELOG.md](CHANGELOG.md) lists the changes in each release, and how to
+The minimum supported Rust version is 1.99. [CHANGELOG.md](CHANGELOG.md) lists the changes in each release, and how to
 move to it from the one before.
 
 ## Example
@@ -91,7 +91,7 @@ toolchain, on docs.rs or with the crate as a path dependency, only warns too. CI
 `-D warnings` above, on the toolchain pinned in `.github/actions/setup-rust`. The last check needs its target:
 `rustup target add x86_64-unknown-none`.
 
-CI also packages the crate, builds the library on Rust 1.87 and lints the Markdown with markdownlint-cli2.
+CI also packages the crate, builds the library on Rust 1.99, the minimum, and lints the Markdown with markdownlint-cli2.
 
 ## License
 

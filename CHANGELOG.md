@@ -27,6 +27,8 @@ Upgrading from 0.2: the breaking changes come first, under Changed, each with wh
   `Rtc::NVRAM_LEN` becomes `NVRAM.len()`, or `NVRAM.end - NVRAM.start` for a `u8` const.
 - With `Century::register`, setting a year before 1900 fails with `Error::YearOutOfRange`, since its century would read
   back as a lost register. A `Century::window` still takes such years.
+- The minimum supported Rust version is 1.99, up from 1.87: a project on an older Rust stays on 0.2 until it moves to
+  1.99.
 - Not breaking: `Rtc::new`, `Rtc::into_bus`, `Rtc::periodic_rate`, `Rtc::enabled` and `Rtc::read_cmos` are
   `#[must_use]`. `Debug` shows `Interrupts` by source name, as in `Interrupts(PERIODIC | ALARM)`, `PeriodicRate` in
   hertz, as in `PeriodicRate { hz: 128 }`, and `Century` as its register in hex or its window's first year, as in
@@ -63,7 +65,7 @@ Upgrading from 0.2: the breaking changes come first, under Changed, each with wh
 
 - `Cargo.toml` warns on its lints instead of denying them, and CI denies every warning, on a pinned Rust, 1.99.0.
 - CI checks the formatting and the docs, runs the tests, packages the crate and builds it for `x86_64-unknown-none`
-  on each PR, and builds the library on Rust 1.87, the `rust-version`.
+  on each PR, and builds the library on Rust 1.99, the `rust-version`.
 - The PR checks run again when a PR is reopened or edited. Publishing tests the release in one job, then publishes it
   in another, in the `release` environment, one release at a time.
 - The tests fake update cycles, torn reads and dropped writes, and check the register layout against the datasheet.
