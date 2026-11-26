@@ -7,8 +7,10 @@ rust-version = "1.87"
 description = "no_std driver for the MC146818 real-time clock and CMOS memory, as found in PCs"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/llp42/mc146818"
 keywords = ["rtc", "cmos", "mc146818", "no-std", "osdev"]
 categories = ["no-std", "embedded", "hardware-support", "os"]
+exclude = [".github", ".gitignore", ".markdownlint-cli2.jsonc"]
 
 [lints.rust]
 warnings = "deny"
