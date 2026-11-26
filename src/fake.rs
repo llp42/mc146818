@@ -107,3 +107,14 @@ impl Bus for Fake {
         };
     }
 }
+
+/// No chip: reads float high and writes go nowhere.
+pub struct Missing;
+
+impl Bus for Missing {
+    fn read(&mut self, _: u8) -> u8 {
+        0xff
+    }
+
+    fn write(&mut self, _: u8, _: u8) {}
+}

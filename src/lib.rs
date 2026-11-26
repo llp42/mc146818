@@ -84,6 +84,20 @@ use date_time::Raw;
 use mode::Mode;
 use register::{Nvram, Register, StatusA, StatusB, StatusD};
 
+/// The waits count reads, for want of a timer, and take none to be quicker
+/// than this many nanoseconds: a hundredth of the original part's 953 ns bus
+/// cycle. On PCs and hypervisors a read takes a microsecond or more.
+const MIN_READ_NS: u32 = 10;
+
+/// The longest UIP stays set, in nanoseconds: from 244 µs before an update to
+/// the end of the update, 1984 µs later (datasheet, Table 6).
+const MAX_UPDATE_NS: u32 = 244_000 + 1_984_000;
+
+/// Tries [`Rtc::between_updates`] makes at an access. Each reads at least
+/// twice, so even at [`MIN_READ_NS`] they outlast the longest update twice
+/// over. On a PC, a missing chip fails after about half a second.
+const UPDATE_TRIES: u32 = MAX_UPDATE_NS / MIN_READ_NS;
+
 /// Access to the chip's registers, `0x00` to `0x7f`.
 ///
 /// On PCs the chip sits behind I/O ports `0x70` (index) and `0x71` (data), and
@@ -183,16 +197,15 @@ impl<B: Bus> Rtc<B> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidContents`] if the chip holds no date and time.
+    /// [`Error::NotResponding`] if the chip never leaves an update, and
+    /// [`Error::InvalidContents`] if it holds no date and time.
     pub fn date_time(&mut self, century: Century) -> Result<DateTime, Error> {
-        let mut raw = self.read_raw(century);
-        loop {
-            let again = self.read_raw(century);
-            if again == raw {
-                break;
-            }
-            raw = again;
-        }
+        let raw = self.between_updates(UPDATE_TRIES, |rtc, _| {
+            // Two reads must agree too, in case the checks around them miss
+            // a change.
+            let raw = rtc.read_raw(century);
+            (rtc.read_raw(century) == raw).then_some(raw)
+        })?;
         raw.decode(self.mode(), century)
             .ok_or(Error::InvalidContents)
     }
@@ -299,8 +312,38 @@ impl<B: Bus> Rtc<B> {
         self.read(Register::Seconds)
     }
 
+    /// Runs `access` between updates, as Linux's `mc146818_avoid_UIP` does:
+    /// reads the seconds, checks that no update is in progress and that the
+    /// seconds held, then runs `access` with them and checks both again.
+    /// Reading the seconds first keeps a stall right after a check, such as
+    /// an SMI, from hiding an update. Tries again, up to `tries` times, while
+    /// a check fails or `access` returns `None`.
+    fn between_updates<T>(
+        &mut self,
+        tries: u32,
+        mut access: impl FnMut(&mut Self, u8) -> Option<T>,
+    ) -> Result<T, Error> {
+        for _ in 0..tries {
+            let second = self.read(Register::Seconds);
+            if self.is_steady(second) {
+                if let Some(value) = access(self, second) {
+                    if self.is_steady(second) {
+                        return Ok(value);
+                    }
+                }
+            }
+            spin_loop();
+        }
+        Err(Error::NotResponding)
+    }
+
+    /// Whether no update is in progress and the seconds still read `second`.
+    fn is_steady(&mut self, second: u8) -> bool {
+        self.read(Register::StatusA) & StatusA::UPDATE_IN_PROGRESS == 0
+            && self.read(Register::Seconds) == second
+    }
+
     fn read_raw(&mut self, century: Century) -> Raw {
-        self.wait_while_updating();
         Raw {
             second: self.read(Register::Seconds),
             minute: self.read(Register::Minutes),
@@ -315,8 +358,8 @@ impl<B: Bus> Rtc<B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Alarm, Century, DateTime, Error, Interrupts, PeriodicRate, Rtc};
-    use crate::fake::Fake;
+    use super::{Alarm, Century, DateTime, Error, Interrupts, PeriodicRate, Rtc, UPDATE_TRIES};
+    use crate::fake::{Fake, Missing};
     use crate::register::{Register, StatusB};
 
     const CENTURY: u8 = 0x32;
@@ -427,6 +470,47 @@ mod tests {
         assert_eq!(
             Rtc::new(&mut fake).date_time(century),
             Ok(DateTime::new(2026, 11, 26, 12, 35, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn stuck_in_update() {
+        // UIP stays set in status A, over the divider and rate bits PCs use.
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        fake.set(Register::StatusA, 0xa6);
+        let mut rtc = Rtc::new(&mut fake);
+        assert_eq!(
+            rtc.date_time(Century::window(2000)),
+            Err(Error::NotResponding)
+        );
+    }
+
+    #[test]
+    fn update_bound() {
+        // An update seen by every try but the last still ends in time; one
+        // seen by every try does not.
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        let century = Century::window(2000);
+        Rtc::new(&mut fake)
+            .set_date_time(date_time, century)
+            .unwrap();
+        fake.updating = UPDATE_TRIES - 1;
+        assert_eq!(Rtc::new(&mut fake).date_time(century), Ok(date_time));
+        fake.updating = UPDATE_TRIES;
+        assert_eq!(
+            Rtc::new(&mut fake).date_time(century),
+            Err(Error::NotResponding)
+        );
+    }
+
+    #[test]
+    fn missing_chip() {
+        // Every read gives 0xff, so an update always seems in progress.
+        let mut rtc = Rtc::new(Missing);
+        assert_eq!(
+            rtc.date_time(Century::window(2000)),
+            Err(Error::NotResponding)
         );
     }
 
