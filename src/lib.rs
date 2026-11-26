@@ -250,11 +250,23 @@ impl<B: Bus> Rtc<B> {
     }
 
     /// Sets the time [`Interrupts::ALARM`] fires at.
-    pub fn set_alarm(&mut self, alarm: Alarm) {
+    ///
+    /// Some chipsets drop writes to the alarm registers during an update, so
+    /// they are written between updates, and again if one may have come in
+    /// between.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotResponding`] if the chip never leaves an update; the alarm
+    /// may then be left unset.
+    pub fn set_alarm(&mut self, alarm: Alarm) -> Result<(), Error> {
         let [hour, minute, second] = alarm.encode(self.mode());
-        self.write(Register::HoursAlarm, hour);
-        self.write(Register::MinutesAlarm, minute);
-        self.write(Register::SecondsAlarm, second);
+        self.between_updates(UPDATE_TRIES, |rtc, _| {
+            rtc.write(Register::HoursAlarm, hour);
+            rtc.write(Register::MinutesAlarm, minute);
+            rtc.write(Register::SecondsAlarm, second);
+            Some(())
+        })
     }
 
     /// The time [`Interrupts::ALARM`] fires at.
@@ -490,7 +502,10 @@ mod tests {
             Err(Error::NotResponding)
         );
         assert_eq!(rtc.alarm(), Err(Error::NotResponding));
+        let alarm = Alarm::new(Some(13), None, None).unwrap();
+        assert_eq!(rtc.set_alarm(alarm), Err(Error::NotResponding));
         assert_eq!(rtc.wait_for_next_second(), Err(Error::NotResponding));
+        assert_eq!(fake.writes, []);
     }
 
     #[test]
@@ -521,6 +536,8 @@ mod tests {
             Err(Error::NotResponding)
         );
         assert_eq!(rtc.alarm(), Err(Error::NotResponding));
+        let alarm = Alarm::new(Some(13), None, None).unwrap();
+        assert_eq!(rtc.set_alarm(alarm), Err(Error::NotResponding));
         assert_eq!(rtc.wait_for_next_second(), Err(Error::NotResponding));
     }
 
@@ -570,7 +587,9 @@ mod tests {
     #[test]
     fn alarm() {
         let mut fake = Fake::new(StatusB::BINARY | StatusB::HOURS_24);
-        Rtc::new(&mut fake).set_alarm(Alarm::new(None, Some(30), Some(0)).unwrap());
+        Rtc::new(&mut fake)
+            .set_alarm(Alarm::new(None, Some(30), Some(0)).unwrap())
+            .unwrap();
         assert_eq!(fake.get(Register::HoursAlarm), 0xff);
         assert_eq!(fake.get(Register::MinutesAlarm), 30);
         assert_eq!(fake.get(Register::SecondsAlarm), 0);
@@ -582,9 +601,25 @@ mod tests {
         for status_b in [0, StatusB::BINARY | StatusB::HOURS_24] {
             let mut fake = Fake::new(status_b);
             let mut rtc = Rtc::new(&mut fake);
-            rtc.set_alarm(alarm);
+            rtc.set_alarm(alarm).unwrap();
             assert_eq!(rtc.alarm(), Ok(alarm));
         }
+    }
+
+    #[test]
+    fn set_alarm_retries_lost_write() {
+        // An update starts once status B, the seconds, status A and the
+        // seconds again have been read, so the writes that follow are lost;
+        // status A shows the update after them.
+        let mut fake = Fake::new(StatusB::BINARY | StatusB::HOURS_24);
+        fake.update_after = Some((3, 1));
+        let alarm = Alarm::new(Some(13), Some(30), Some(5)).unwrap();
+        assert_eq!(Rtc::new(&mut fake).set_alarm(alarm), Ok(()));
+        assert_eq!(fake.get(Register::HoursAlarm), 13);
+        assert_eq!(fake.get(Register::MinutesAlarm), 30);
+        assert_eq!(fake.get(Register::SecondsAlarm), 5);
+        let writes = [(0x05, 13), (0x03, 30), (0x01, 5)];
+        assert_eq!(fake.writes, [writes, writes].concat());
     }
 
     #[test]
@@ -593,7 +628,7 @@ mod tests {
         // valid alarm that matches every time.
         let mut fake = Fake::new(StatusB::HOURS_24);
         let alarm = Alarm::new(Some(13), Some(30), Some(5)).unwrap();
-        Rtc::new(&mut fake).set_alarm(alarm);
+        Rtc::new(&mut fake).set_alarm(alarm).unwrap();
         fake.updating = 3;
         assert_eq!(Rtc::new(&mut fake).alarm(), Ok(alarm));
         assert_eq!(fake.updating, 0);
