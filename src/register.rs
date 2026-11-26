@@ -49,6 +49,7 @@ impl StatusB {
 pub struct StatusD;
 
 impl StatusD {
-    /// Cleared once the battery runs down.
+    /// VRT: cleared by the power-sense pin going low, set by any read of
+    /// status D.
     pub const VALID: u8 = 0x80;
 }

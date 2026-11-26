@@ -159,8 +159,13 @@ impl<B: Bus> Rtc<B> {
         self.bus
     }
 
-    /// Whether the clock and memory kept their contents; false once the
-    /// battery runs down.
+    /// Whether the clock and memory kept their contents, as the VRT bit of
+    /// status D says.
+    ///
+    /// The datasheet has VRT cleared only by the power-sense pin going low,
+    /// and set by any read of status D, this one included (pages 7 and 16).
+    /// So once the pin has cleared it, the first call returns false and later
+    /// ones true: call this once at boot and keep the result.
     pub fn is_valid(&mut self) -> bool {
         self.read(Register::StatusD) & StatusD::VALID != 0
     }
