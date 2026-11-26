@@ -13,9 +13,8 @@ categories = ["no-std", "embedded", "hardware-support", "os"]
 exclude = [".github", ".gitignore", ".markdownlint-cli2.jsonc"]
 
 [lints.rust]
-warnings = "deny"
-missing_docs = "deny"
+missing_docs = "warn"
 
 [lints.clippy]
-pedantic = { level = "deny", priority = -1 }
-nursery = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }

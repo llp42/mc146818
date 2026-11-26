@@ -26,5 +26,6 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
-      # The lint levels, pedantic and nursery included, are in Cargo.toml.
-      - run: cargo clippy --all-targets --locked
+      # Cargo.toml sets the lints, pedantic and nursery included, to warn, so that a newer toolchain, on docs.rs or in a
+      # path dependency, only warns. CI denies every warning.
+      - run: cargo clippy --all-targets --locked -- -D warnings
