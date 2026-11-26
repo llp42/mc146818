@@ -97,7 +97,7 @@ const MAX_UPDATE_NS: u32 = 244_000 + 1_984_000;
 
 /// Tries [`Rtc::between_updates`] makes at an access. Each reads at least
 /// twice, so even at [`MIN_READ_NS`] they outlast the longest update twice
-/// over. On a PC, a missing chip fails after about half a second.
+/// over. On a PC, a missing chip fails after half a second or more.
 const UPDATE_TRIES: u32 = MAX_UPDATE_NS / MIN_READ_NS;
 
 /// Tries at the next second, up to a second and an update away, counted as
@@ -217,8 +217,8 @@ impl<B: Bus> Rtc<B> {
     /// [`Error::InvalidContents`] if it holds no date and time.
     pub fn date_time(&mut self, century: Century) -> Result<DateTime, Error> {
         let raw = self.between_updates(UPDATE_TRIES, |rtc, _| {
-            // Two reads must agree too, in case the checks around them miss
-            // a change.
+            // Two reads must agree too, in case a stall of a minute or more
+            // slips past the checks around them.
             let raw = rtc.read_raw(century);
             (rtc.read_raw(century) == raw).then_some(raw)
         })?;
