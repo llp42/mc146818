@@ -19,8 +19,9 @@ const VRT: u8 = 0x80;
 
 pub struct Fake {
     pub registers: [u8; 128],
-    /// Reads of the seconds register before it advances.
-    pub tick_after: Option<u32>,
+    /// The clock ticking mid-read: once the seconds register has been read
+    /// that many more times, the next read of it is followed by these writes.
+    pub tick_after: Option<(u32, &'static [(Register, u8)])>,
 }
 
 impl Fake {
@@ -54,11 +55,13 @@ impl Bus for Fake {
         }
         if register == SECONDS {
             match self.tick_after {
-                Some(0) => {
-                    self.registers[index] += 1;
+                Some((0, writes)) => {
+                    for &(target, byte) in writes {
+                        self.set(target, byte);
+                    }
                     self.tick_after = None;
                 }
-                Some(reads) => self.tick_after = Some(reads - 1),
+                Some((reads, writes)) => self.tick_after = Some((reads - 1, writes)),
                 None => {}
             }
         }

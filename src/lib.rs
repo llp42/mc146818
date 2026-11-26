@@ -445,9 +445,9 @@ mod tests {
     fn next_second() {
         let mut fake = Fake::new(0);
         fake.set(Register::Seconds, 0x41);
-        fake.tick_after = Some(5);
+        fake.tick_after = Some((5, &[(Register::Seconds, 0x42)]));
         Rtc::new(&mut fake).wait_for_next_second();
         assert_eq!(fake.get(Register::Seconds), 0x42);
-        assert_eq!(fake.tick_after, None);
+        assert!(fake.tick_after.is_none());
     }
 }
