@@ -250,6 +250,33 @@ impl<B: Bus> Rtc<B> {
     ///
     /// [`Error::NotResponding`] if the chip never leaves an update, and
     /// [`Error::InvalidContents`] if it holds no date and time.
+    ///
+    /// # Examples
+    ///
+    /// The century register the ACPI FADT gives, or years 2000 to 2099 if it
+    /// gives none:
+    ///
+    /// ```
+    /// # struct Cmos([u8; 128]);
+    /// # impl mc146818::Bus for Cmos {
+    /// #     fn read(&mut self, r: u8) -> u8 { self.0[usize::from(r)] }
+    /// #     fn write(&mut self, r: u8, v: u8) { self.0[usize::from(r)] = v }
+    /// # }
+    /// # struct Fadt { century: u8 }
+    /// # fn main() -> Result<(), mc146818::Error> {
+    /// # let fadt = Fadt { century: 0x32 };
+    /// # let mut rtc = mc146818::Rtc::new(Cmos([0; 128]));
+    /// # let set = mc146818::DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+    /// # rtc.set_date_time(set, mc146818::Century::register(0x32).unwrap())?;
+    /// use mc146818::Century;
+    ///
+    /// // The field is 0 if there is no century register.
+    /// let century = Century::register(fadt.century).unwrap_or(Century::window(2000));
+    /// let now = rtc.date_time(century)?;
+    /// # assert_eq!(now, set);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn date_time(&mut self, century: Century) -> Result<DateTime, Error> {
         // A read an update tore fails the checks after it, as in Linux.
         let raw = self.between_updates(UPDATE_TRIES, |rtc, _| Some(rtc.read_raw(century)))?;
