@@ -261,15 +261,18 @@ impl<B: Bus> Rtc<B> {
     ///
     /// # Errors
     ///
+    /// [`Error::NotResponding`] if the chip never leaves an update, and
     /// [`Error::InvalidContents`] if an alarm register holds neither a time
     /// nor a match-all.
     pub fn alarm(&mut self) -> Result<Alarm, Error> {
         let mode = self.mode();
-        let raw = [
-            self.read(Register::HoursAlarm),
-            self.read(Register::MinutesAlarm),
-            self.read(Register::SecondsAlarm),
-        ];
+        let raw = self.between_updates(UPDATE_TRIES, |rtc, _| {
+            Some([
+                rtc.read(Register::HoursAlarm),
+                rtc.read(Register::MinutesAlarm),
+                rtc.read(Register::SecondsAlarm),
+            ])
+        })?;
         Alarm::decode(raw, mode).ok_or(Error::InvalidContents)
     }
 
@@ -486,6 +489,7 @@ mod tests {
             rtc.date_time(Century::window(2000)),
             Err(Error::NotResponding)
         );
+        assert_eq!(rtc.alarm(), Err(Error::NotResponding));
         assert_eq!(rtc.wait_for_next_second(), Err(Error::NotResponding));
     }
 
@@ -516,6 +520,7 @@ mod tests {
             rtc.date_time(Century::window(2000)),
             Err(Error::NotResponding)
         );
+        assert_eq!(rtc.alarm(), Err(Error::NotResponding));
         assert_eq!(rtc.wait_for_next_second(), Err(Error::NotResponding));
     }
 
@@ -580,6 +585,18 @@ mod tests {
             rtc.set_alarm(alarm);
             assert_eq!(rtc.alarm(), Ok(alarm));
         }
+    }
+
+    #[test]
+    fn alarm_waits_out_update() {
+        // Read during the update, the alarm registers would give 0xff, a
+        // valid alarm that matches every time.
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        let alarm = Alarm::new(Some(13), Some(30), Some(5)).unwrap();
+        Rtc::new(&mut fake).set_alarm(alarm);
+        fake.updating = 3;
+        assert_eq!(Rtc::new(&mut fake).alarm(), Ok(alarm));
+        assert_eq!(fake.updating, 0);
     }
 
     #[test]
