@@ -29,3 +29,12 @@ jobs:
       # Cargo.toml sets the lints, pedantic and nursery included, to warn, so that a newer toolchain, on docs.rs or in a
       # path dependency, only warns. CI denies every warning.
       - run: cargo clippy --all-targets --locked -- -D warnings
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
