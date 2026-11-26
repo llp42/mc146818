@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal --component clippy
+      # The toolchain CI pins, in .github/actions/setup-rust.
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
       # The lint levels, pedantic and nursery included, are in Cargo.toml.
       - run: cargo clippy --all-targets --locked
