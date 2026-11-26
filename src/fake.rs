@@ -32,6 +32,8 @@ pub struct Fake {
     /// reads of any register have been made, the next one is followed by an
     /// update seen by this many reads of status A.
     pub update_after: Option<(u32, u32)>,
+    /// Every register read, in order.
+    pub reads: Vec<u8>,
     /// Every write, in order.
     pub writes: Vec<(u8, u8)>,
 }
@@ -48,6 +50,7 @@ impl Fake {
             tick_after: None,
             updating: 0,
             update_after: None,
+            reads: Vec::new(),
             writes: Vec::new(),
         }
     }
@@ -63,6 +66,7 @@ impl Fake {
 
 impl Bus for Fake {
     fn read(&mut self, register: u8) -> u8 {
+        self.reads.push(register);
         let index = usize::from(register);
         let mut value = self.registers[index];
         if self.updating > 0 {
