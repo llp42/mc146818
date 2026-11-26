@@ -20,3 +20,23 @@ jobs:
       - run: cargo package --locked
       # no_std: a bare-metal target has no std to link.
       - run: cargo build --locked --target x86_64-unknown-none
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The rust-version of Cargo.toml, read with the runner's own cargo, so that this job cannot drift from it.
+      - id: msrv
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version // empty')
+          if [[ -z "$version" ]]; then
+            echo "::error::Cargo.toml sets no rust-version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      # The library alone, as the minimum version is promised for it and not for the tests. Warnings are left to the
+      # pinned toolchain: an older one can raise some that a newer one has dropped.
+      - run: cargo build --lib --locked
