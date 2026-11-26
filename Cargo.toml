@@ -16,5 +16,6 @@ exclude = [".github", ".gitignore", ".markdownlint-cli2.jsonc"]
 missing_docs = "warn"
 
 [lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
