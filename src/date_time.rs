@@ -4,6 +4,8 @@
 
 //! Dates, and the century the chip keeps them in.
 
+use core::fmt;
+
 use crate::mode::Mode;
 use crate::{Error, NVRAM};
 
@@ -155,10 +157,10 @@ const fn is_leap(year: u16) -> bool {
 }
 
 /// Where the century of the chip's two-digit year comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Century(Source);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Source {
     Register(u8),
     Window(u16),
@@ -198,6 +200,19 @@ impl Century {
             Source::Register(index) => Some(index),
             Source::Window(_) => None,
         }
+    }
+}
+
+/// The register in hex, or the window's first year:
+/// `Century { register: 0x32 }` or `Century { window: 2000 }`.
+impl fmt::Debug for Century {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut century = f.debug_struct("Century");
+        match self.0 {
+            Source::Register(index) => century.field("register", &format_args!("{index:#04x}")),
+            Source::Window(first) => century.field("window", &first),
+        };
+        century.finish()
     }
 }
 
@@ -354,6 +369,21 @@ mod tests {
             assert_eq!(century.is_some(), NVRAM.contains(&index), "{index:#04x}");
             assert_eq!(century.and_then(Century::index), century.map(|_| index));
         }
+    }
+
+    #[test]
+    fn century_debug() {
+        let debug = |century| format!("{century:?}");
+        assert_eq!(
+            debug(Century::register(0x32).unwrap()),
+            "Century { register: 0x32 }"
+        );
+        assert_eq!(
+            debug(Century::register(0x0e).unwrap()),
+            "Century { register: 0x0e }"
+        );
+        assert_eq!(debug(Century::window(2000)), "Century { window: 2000 }");
+        assert_eq!(debug(Century::window(0)), "Century { window: 0 }");
     }
 
     #[test]
