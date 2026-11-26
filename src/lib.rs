@@ -463,6 +463,25 @@ mod tests {
     }
 
     #[test]
+    fn interrupts_keep_status_b() {
+        // Only bits 0x70 of status B change, whatever the set: SET (0x80) and
+        // SQWE, DM, 24/12 and DSE (0x0f) stay as they are.
+        for n in 0..8 {
+            let bits = n << 4;
+            let set = Interrupts::from_status(bits);
+            for (set, bits) in [(set, bits), (Interrupts::ALL - set, 0x70 & !bits)] {
+                let mut fake = Fake::new(0x8f);
+                let mut rtc = Rtc::new(&mut fake);
+                rtc.enable(set);
+                assert_eq!(rtc.enabled(), set);
+                rtc.disable(set);
+                assert_eq!(rtc.enabled(), Interrupts::NONE);
+                assert_eq!(fake.writes, [(0x0b, 0x8f | bits), (0x0b, 0x8f)]);
+            }
+        }
+    }
+
+    #[test]
     fn date_time_round_trip() {
         let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
         for status_b in [0, StatusB::BINARY | StatusB::HOURS_24] {
