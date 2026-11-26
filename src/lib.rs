@@ -52,7 +52,9 @@
 //! driver leaves each as it finds it and offers no way to change it:
 //!
 //! - The oscillator and divider chain (`DV2` to `DV0` of status A), so the
-//!   driver neither starts the oscillator nor selects the time base.
+//!   driver neither starts the oscillator nor selects the time base. Nor does
+//!   it reset the divider while it sets the time, so the first update after
+//!   [`Rtc::set_date_time`] comes anywhere within the next second.
 //! - The square-wave output and daylight-saving enables (`SQWE` and `DSE` of
 //!   status B), which PCs do not use.
 //! - The data mode, binary or BCD and 12- or 24-hour. The driver reads it from
@@ -249,6 +251,11 @@ impl<B: Bus> Rtc<B> {
 
     /// Sets the date, the time and the day of the week, and keeps the clock
     /// running.
+    ///
+    /// The divider chain is left to the firmware, as
+    /// [Left to the firmware](crate#left-to-the-firmware) says, so it runs on
+    /// while the time is set, and the first update after this comes anywhere
+    /// within the next second: the time set is good to about a second.
     ///
     /// # Errors
     ///
