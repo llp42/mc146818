@@ -10,7 +10,8 @@ use core::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Error {
-    /// The chip seemed to stay in an update, as it does when none is there.
+    /// The chip seemed to stay in an update, as it does when none is there,
+    /// or the next second never came, as when the clock is halted.
     NotResponding,
     /// The registers hold no valid date, time or alarm.
     InvalidContents,

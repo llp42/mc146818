@@ -98,6 +98,15 @@ const MAX_UPDATE_NS: u32 = 244_000 + 1_984_000;
 /// over. On a PC, a missing chip fails after about half a second.
 const UPDATE_TRIES: u32 = MAX_UPDATE_NS / MIN_READ_NS;
 
+/// Tries at the next second, up to a second and an update away, counted as
+/// [`UPDATE_TRIES`] are. On a PC, a halted clock fails after minutes.
+#[cfg(not(test))]
+const SECOND_TRIES: u32 = (1_000_000_000 + MAX_UPDATE_NS) / MIN_READ_NS;
+
+/// Few enough for tests to reach, and still more than [`UPDATE_TRIES`].
+#[cfg(test)]
+const SECOND_TRIES: u32 = 2 * UPDATE_TRIES;
+
 /// Access to the chip's registers, `0x00` to `0x7f`.
 ///
 /// On PCs the chip sits behind I/O ports `0x70` (index) and `0x71` (data), and
@@ -147,13 +156,16 @@ impl<B: Bus> Rtc<B> {
         self.read(Register::StatusD) & StatusD::VALID != 0
     }
 
-    /// Returns once the seconds register changes. Never returns while the
-    /// clock is halted.
-    pub fn wait_for_next_second(&mut self) {
-        let second = self.seconds();
-        while self.seconds() == second {
-            spin_loop();
-        }
+    /// Returns once the seconds register changes.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotResponding`] if the chip never leaves an update, or if the
+    /// seconds keep still, as they do while the clock is halted. With no timer
+    /// to go by, giving up on a halted clock takes minutes on a PC.
+    pub fn wait_for_next_second(&mut self) -> Result<(), Error> {
+        let first = self.between_updates(UPDATE_TRIES, |_, second| Some(second))?;
+        self.between_updates(SECOND_TRIES, |_, second| (second != first).then_some(()))
     }
 
     /// Sets the rate of [`Interrupts::PERIODIC`]. `None` turns the periodic
@@ -301,17 +313,6 @@ impl<B: Bus> Rtc<B> {
         Mode::new(self.read(Register::StatusB))
     }
 
-    fn wait_while_updating(&mut self) {
-        while self.read(Register::StatusA) & StatusA::UPDATE_IN_PROGRESS != 0 {
-            spin_loop();
-        }
-    }
-
-    fn seconds(&mut self) -> u8 {
-        self.wait_while_updating();
-        self.read(Register::Seconds)
-    }
-
     /// Runs `access` between updates, as Linux's `mc146818_avoid_UIP` does:
     /// reads the seconds, checks that no update is in progress and that the
     /// seconds held, then runs `access` with them and checks both again.
@@ -358,7 +359,9 @@ impl<B: Bus> Rtc<B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Alarm, Century, DateTime, Error, Interrupts, PeriodicRate, Rtc, UPDATE_TRIES};
+    use super::{
+        Alarm, Century, DateTime, Error, Interrupts, PeriodicRate, Rtc, SECOND_TRIES, UPDATE_TRIES,
+    };
     use crate::fake::{Fake, Missing};
     use crate::register::{Register, StatusB};
 
@@ -483,6 +486,7 @@ mod tests {
             rtc.date_time(Century::window(2000)),
             Err(Error::NotResponding)
         );
+        assert_eq!(rtc.wait_for_next_second(), Err(Error::NotResponding));
     }
 
     #[test]
@@ -512,6 +516,7 @@ mod tests {
             rtc.date_time(Century::window(2000)),
             Err(Error::NotResponding)
         );
+        assert_eq!(rtc.wait_for_next_second(), Err(Error::NotResponding));
     }
 
     #[test]
@@ -614,8 +619,40 @@ mod tests {
         let mut fake = Fake::new(0);
         fake.set(Register::Seconds, 0x41);
         fake.tick_after = Some((5, &[(Register::Seconds, 0x42)]));
-        Rtc::new(&mut fake).wait_for_next_second();
+        assert_eq!(Rtc::new(&mut fake).wait_for_next_second(), Ok(()));
         assert_eq!(fake.get(Register::Seconds), 0x42);
         assert!(fake.tick_after.is_none());
+    }
+
+    #[test]
+    fn next_second_skips_update() {
+        // A stall after a read of status A that finds no update lets one
+        // start before the seconds are read, which then read 0xff; that must
+        // not end the wait. Five reads find the first second, the update
+        // starts after the next read of status A, and the clock ticks in it.
+        let mut fake = Fake::new(0);
+        fake.set(Register::Seconds, 0x41);
+        fake.update_after = Some((6, 2));
+        fake.tick_after = Some((4, &[(Register::Seconds, 0x42)]));
+        assert_eq!(Rtc::new(&mut fake).wait_for_next_second(), Ok(()));
+        assert!(fake.update_after.is_none() && fake.tick_after.is_none());
+        assert_eq!(fake.updating, 0);
+    }
+
+    #[test]
+    fn next_second_bound() {
+        // The first second takes three reads of the seconds, and each try
+        // that finds it again takes two more. A tick after every try but the
+        // last still ends the wait; one after every try is too late, as if
+        // the clock were halted.
+        for (reads, result) in [
+            (2 * SECOND_TRIES, Ok(())),
+            (2 * SECOND_TRIES + 2, Err(Error::NotResponding)),
+        ] {
+            let mut fake = Fake::new(0);
+            fake.set(Register::Seconds, 0x41);
+            fake.tick_after = Some((reads, &[(Register::Seconds, 0x42)]));
+            assert_eq!(Rtc::new(&mut fake).wait_for_next_second(), result);
+        }
     }
 }

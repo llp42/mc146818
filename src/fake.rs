@@ -28,6 +28,10 @@ pub struct Fake {
     /// calendar and alarm registers read 0xff, as the datasheet leaves them
     /// undefined, and drop writes, as some chipsets do. Setting SET ends it.
     pub updating: u32,
+    /// An update starting mid-access, as after a stall: once that many more
+    /// reads of any register have been made, the next one is followed by an
+    /// update seen by this many reads of status A.
+    pub update_after: Option<(u32, u32)>,
     /// Every write, in order.
     pub writes: Vec<(u8, u8)>,
 }
@@ -43,6 +47,7 @@ impl Fake {
             registers,
             tick_after: None,
             updating: 0,
+            update_after: None,
             writes: Vec::new(),
         }
     }
@@ -82,6 +87,14 @@ impl Bus for Fake {
                 Some((reads, writes)) => self.tick_after = Some((reads - 1, writes)),
                 None => {}
             }
+        }
+        match self.update_after {
+            Some((0, updating)) => {
+                self.updating = updating;
+                self.update_after = None;
+            }
+            Some((reads, updating)) => self.update_after = Some((reads - 1, updating)),
+            None => {}
         }
         value
     }
