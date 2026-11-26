@@ -18,7 +18,7 @@ The minimum supported Rust version is 1.87.
 
 ## Example
 
-Reading the time at boot on a PC, where the port accesses are left out:
+Reading the time at boot on a PC, with the port accesses left out:
 
 ```rust
 use mc146818::{Bus, Century, Rtc};
@@ -49,7 +49,7 @@ fn boot_time(fadt_century: u8) -> Result<i64, mc146818::Error> {
 
 ## Time zones
 
-The chip keeps whatever time the machine was set to, and no time zone: often local time, on PCs that also boot
+The chip keeps no time zone, only whatever time the machine was set to: often local time on PCs that also boot
 Windows. `DateTime::unix_timestamp` and `DateTime::from_unix_timestamp` take that time as UTC. For a clock kept in
 local time, subtract the zone's UTC offset from the timestamp, or add it to one before converting it back.
 
