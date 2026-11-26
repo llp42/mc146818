@@ -33,7 +33,8 @@
 //! let mut rtc = Rtc::new(Cmos);
 //! let now = rtc.date_time(Century::window(2000))?;
 //!
-//! rtc.set_periodic_rate(Some(PeriodicRate::from_hz(128).unwrap()));
+//! const RATE: PeriodicRate = PeriodicRate::from_hz(128).unwrap();
+//! rtc.set_periodic_rate(RATE);
 //! // Drops stale flags, which would raise the interrupt at once.
 //! rtc.acknowledge();
 //! rtc.enable(Interrupts::PERIODIC);
@@ -178,15 +179,20 @@ impl<B: Bus> Rtc<B> {
         self.between_updates(SECOND_TRIES, |_, second| (second != first).then_some(()))
     }
 
-    /// Sets the rate of [`Interrupts::PERIODIC`]. `None` turns the periodic
-    /// flag off, which disabling the interrupt does not: the flag is set
-    /// whether or not the interrupt is enabled.
-    pub fn set_periodic_rate(&mut self, rate: Option<PeriodicRate>) {
-        let a = self.read(Register::StatusA) & !StatusA::RATE_SELECT;
-        self.write(Register::StatusA, a | rate.map_or(0, PeriodicRate::bits));
+    /// Sets the rate of [`Interrupts::PERIODIC`], turning the periodic flag
+    /// on if it was off.
+    pub fn set_periodic_rate(&mut self, rate: PeriodicRate) {
+        self.set_rate_select(rate.bits());
     }
 
-    /// The rate of [`Interrupts::PERIODIC`]; `None` if it is off.
+    /// Turns the periodic flag off, which disabling [`Interrupts::PERIODIC`]
+    /// does not: the flag is set whether or not the interrupt is enabled.
+    pub fn stop_periodic(&mut self) {
+        self.set_rate_select(0);
+    }
+
+    /// The rate of [`Interrupts::PERIODIC`]; `None` if the periodic flag is
+    /// off.
     pub fn periodic_rate(&mut self) -> Option<PeriodicRate> {
         PeriodicRate::from_select(self.read(Register::StatusA) & StatusA::RATE_SELECT)
     }
@@ -336,6 +342,12 @@ impl<B: Bus> Rtc<B> {
         Mode::new(self.read(Register::StatusB))
     }
 
+    /// Writes the rate-select bits of status A, keeping the divider's.
+    fn set_rate_select(&mut self, select: u8) {
+        let a = self.read(Register::StatusA) & !StatusA::RATE_SELECT;
+        self.write(Register::StatusA, a | select);
+    }
+
     /// Runs `access` between updates, as Linux's `mc146818_avoid_UIP` does:
     /// reads the seconds, checks that no update is in progress and that the
     /// seconds held, then runs `access` with them and checks both again.
@@ -399,19 +411,25 @@ mod tests {
     #[test]
     fn periodic_rate_keeps_divider() {
         let mut fake = Fake::new(0);
-        Rtc::new(&mut fake).set_periodic_rate(PeriodicRate::from_hz(128));
+        Rtc::new(&mut fake).set_periodic_rate(PeriodicRate::from_hz(128).unwrap());
         assert_eq!(fake.get(Register::StatusA), 0x29);
     }
 
     #[test]
-    fn periodic_rate_off() {
+    fn stop_periodic() {
+        // Rate select 0 turns the flag off; the divider bits stay.
         let mut fake = Fake::new(0);
         let mut rtc = Rtc::new(&mut fake);
-        rtc.set_periodic_rate(PeriodicRate::from_hz(8192));
+        rtc.set_periodic_rate(PeriodicRate::from_hz(8192).unwrap());
         assert_eq!(rtc.periodic_rate(), PeriodicRate::from_hz(8192));
-        rtc.set_periodic_rate(None);
+        rtc.stop_periodic();
         assert_eq!(rtc.periodic_rate(), None);
         assert_eq!(fake.get(Register::StatusA), 0x20);
+        // And the next rate turns it back on.
+        let mut rtc = Rtc::new(&mut fake);
+        rtc.set_periodic_rate(PeriodicRate::from_hz(2).unwrap());
+        assert_eq!(rtc.periodic_rate(), PeriodicRate::from_hz(2));
+        assert_eq!(fake.get(Register::StatusA), 0x2f);
     }
 
     #[test]
