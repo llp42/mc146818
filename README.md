@@ -47,6 +47,12 @@ fn boot_time(fadt_century: u8) -> Result<i64, mc146818::Error> {
 }
 ```
 
+## Time zones
+
+The chip keeps whatever time the machine was set to, and no time zone: often local time, on PCs that also boot
+Windows. `DateTime::unix_timestamp` and `DateTime::from_unix_timestamp` take that time as UTC. For a clock kept in
+local time, subtract the zone's UTC offset from the timestamp, or add it to one before converting it back.
+
 ## Left to the firmware
 
 The firmware normally sets up the following before the kernel runs. The driver leaves each as it finds it and offers
