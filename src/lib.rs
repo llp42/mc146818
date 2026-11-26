@@ -148,11 +148,13 @@ pub struct Rtc<B> {
 
 impl<B: Bus> Rtc<B> {
     /// The clock behind `bus`.
+    #[must_use]
     pub const fn new(bus: B) -> Self {
         Self { bus }
     }
 
     /// Gives the bus back.
+    #[must_use]
     pub fn into_bus(self) -> B {
         self.bus
     }
@@ -195,6 +197,7 @@ impl<B: Bus> Rtc<B> {
 
     /// The rate of [`Interrupts::PERIODIC`]; `None` if the periodic flag is
     /// off.
+    #[must_use]
     pub fn periodic_rate(&mut self) -> Option<PeriodicRate> {
         PeriodicRate::from_select(self.read(Register::StatusA) & StatusA::RATE_SELECT)
     }
@@ -214,6 +217,7 @@ impl<B: Bus> Rtc<B> {
     }
 
     /// The enabled interrupts.
+    #[must_use]
     pub fn enabled(&mut self) -> Interrupts {
         Interrupts::from_status(self.read(Register::StatusB))
     }
@@ -310,6 +314,7 @@ impl<B: Bus> Rtc<B> {
     /// # Panics
     ///
     /// If `register` is outside [`NVRAM`].
+    #[must_use]
     pub fn read_cmos(&mut self, register: u8) -> u8 {
         check_nvram(register);
         self.bus.read(register)
