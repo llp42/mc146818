@@ -4,9 +4,7 @@
 
 //! Dates, and the century the chip keeps them in.
 
-use core::error::Error;
-use core::fmt;
-
+use crate::Error;
 use crate::mode::Mode;
 use crate::register::Nvram;
 
@@ -199,18 +197,6 @@ impl Century {
     }
 }
 
-/// The year lies outside the [`Century::window`] in use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct YearOutOfWindow;
-
-impl fmt::Display for YearOutOfWindow {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("year outside the century window")
-    }
-}
-
-impl Error for YearOutOfWindow {}
-
 /// The clock registers, encoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Raw {
@@ -247,16 +233,12 @@ impl Raw {
         DateTime::new(year, month, day, hour, minute, second)
     }
 
-    pub const fn encode(
-        date_time: DateTime,
-        mode: Mode,
-        century: Century,
-    ) -> Result<Self, YearOutOfWindow> {
+    pub const fn encode(date_time: DateTime, mode: Mode, century: Century) -> Result<Self, Error> {
         let year = date_time.year;
         let century = match century.0 {
             Source::Register(_) => mode.encode(two_digits(year / 100)),
             Source::Window(first) if first <= year && year < first + 100 => 0,
-            Source::Window(_) => return Err(YearOutOfWindow),
+            Source::Window(_) => return Err(Error::YearOutOfRange),
         };
         Ok(Self {
             second: mode.encode(date_time.second),
@@ -276,7 +258,8 @@ const fn two_digits(value: u16) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Century, DateTime, Raw, Weekday, YearOutOfWindow, days_in_month};
+    use super::{Century, DateTime, Raw, Weekday, days_in_month};
+    use crate::Error;
     use crate::mode::Mode;
     use crate::register::StatusB;
 
@@ -415,9 +398,9 @@ mod tests {
             let date_time = DateTime::new(year, 1, 1, 0, 0, 0).unwrap();
             Raw::encode(date_time, mode, since_1980).map(|raw| raw.year)
         };
-        assert_eq!(encode(1979), Err(YearOutOfWindow));
+        assert_eq!(encode(1979), Err(Error::YearOutOfRange));
         assert_eq!(encode(1980), Ok(80));
-        assert_eq!(encode(2080), Err(YearOutOfWindow));
+        assert_eq!(encode(2080), Err(Error::YearOutOfRange));
     }
 
     #[test]

@@ -11,7 +11,7 @@
 //! behind a lock that masks that interrupt.
 //!
 //! ```no_run
-//! use mc146818::{Bus, Interrupts, PeriodicRate, Rtc};
+//! use mc146818::{Bus, Century, Interrupts, PeriodicRate, Rtc};
 //!
 //! /// Index port 0x70, data port 0x71.
 //! struct Cmos;
@@ -29,12 +29,18 @@
 //!     }
 //! }
 //!
+//! # fn main() -> Result<(), mc146818::Error> {
 //! let mut rtc = Rtc::new(Cmos);
+//! let now = rtc.date_time(Century::window(2000))?;
+//!
 //! rtc.set_periodic_rate(Some(PeriodicRate::from_hz(128).unwrap()));
 //! rtc.enable(Interrupts::PERIODIC);
 //!
 //! // In the interrupt handler:
 //! let pending = rtc.acknowledge();
+//! # let _ = (now, pending);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Left to the firmware
@@ -58,6 +64,7 @@
 
 mod alarm;
 mod date_time;
+mod error;
 #[cfg(test)]
 mod fake;
 mod interrupts;
@@ -68,7 +75,8 @@ mod register;
 use core::hint::spin_loop;
 
 pub use alarm::Alarm;
-pub use date_time::{Century, DateTime, Weekday, YearOutOfWindow};
+pub use date_time::{Century, DateTime, Weekday};
+pub use error::Error;
 pub use interrupts::Interrupts;
 pub use rate::PeriodicRate;
 
@@ -171,8 +179,12 @@ impl<B: Bus> Rtc<B> {
         Interrupts::from_status(self.read(Register::StatusC))
     }
 
-    /// The current date and time; `None` if the chip holds none.
-    pub fn date_time(&mut self, century: Century) -> Option<DateTime> {
+    /// The current date and time.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidContents`] if the chip holds no date and time.
+    pub fn date_time(&mut self, century: Century) -> Result<DateTime, Error> {
         let mut raw = self.read_raw(century);
         loop {
             let again = self.read_raw(century);
@@ -182,6 +194,7 @@ impl<B: Bus> Rtc<B> {
             raw = again;
         }
         raw.decode(self.mode(), century)
+            .ok_or(Error::InvalidContents)
     }
 
     /// Sets the date, the time and the day of the week, and keeps the clock
@@ -189,13 +202,9 @@ impl<B: Bus> Rtc<B> {
     ///
     /// # Errors
     ///
-    /// [`YearOutOfWindow`] if `century` is a window that excludes the year; the
-    /// chip is left untouched.
-    pub fn set_date_time(
-        &mut self,
-        date_time: DateTime,
-        century: Century,
-    ) -> Result<(), YearOutOfWindow> {
+    /// [`Error::YearOutOfRange`] if `century` cannot keep the year; the chip
+    /// is left untouched.
+    pub fn set_date_time(&mut self, date_time: DateTime, century: Century) -> Result<(), Error> {
         let b = self.read(Register::StatusB);
         let mode = Mode::new(b);
         let raw = Raw::encode(date_time, mode, century)?;
@@ -223,16 +232,20 @@ impl<B: Bus> Rtc<B> {
         self.write(Register::SecondsAlarm, second);
     }
 
-    /// The time [`Interrupts::ALARM`] fires at; `None` if the alarm registers
-    /// hold neither a time nor a match-all.
-    pub fn alarm(&mut self) -> Option<Alarm> {
+    /// The time [`Interrupts::ALARM`] fires at.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidContents`] if an alarm register holds neither a time
+    /// nor a match-all.
+    pub fn alarm(&mut self) -> Result<Alarm, Error> {
         let mode = self.mode();
         let raw = [
             self.read(Register::HoursAlarm),
             self.read(Register::MinutesAlarm),
             self.read(Register::SecondsAlarm),
         ];
-        Alarm::decode(raw, mode)
+        Alarm::decode(raw, mode).ok_or(Error::InvalidContents)
     }
 
     /// The battery-backed byte at `offset`.
@@ -302,7 +315,7 @@ impl<B: Bus> Rtc<B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Alarm, Century, DateTime, Interrupts, PeriodicRate, Rtc, YearOutOfWindow};
+    use super::{Alarm, Century, DateTime, Error, Interrupts, PeriodicRate, Rtc};
     use crate::fake::Fake;
     use crate::register::{Register, StatusB};
 
@@ -350,7 +363,7 @@ mod tests {
                 let mut fake = Fake::new(status_b);
                 let mut rtc = Rtc::new(&mut fake);
                 rtc.set_date_time(date_time, century).unwrap();
-                assert_eq!(rtc.date_time(century), Some(date_time));
+                assert_eq!(rtc.date_time(century), Ok(date_time));
                 assert_eq!(fake.get(Register::StatusB), status_b);
             }
         }
@@ -386,7 +399,7 @@ mod tests {
             .set_date_time(date_time, century)
             .unwrap();
         fake.updating = 3;
-        assert_eq!(Rtc::new(&mut fake).date_time(century), Some(date_time));
+        assert_eq!(Rtc::new(&mut fake).date_time(century), Ok(date_time));
     }
 
     #[test]
@@ -399,7 +412,7 @@ mod tests {
         let century = Century::register(CENTURY).unwrap();
         let mut rtc = Rtc::new(&mut fake);
         rtc.set_date_time(date_time, century).unwrap();
-        assert_eq!(rtc.date_time(century), Some(date_time));
+        assert_eq!(rtc.date_time(century), Ok(date_time));
     }
 
     #[test]
@@ -413,7 +426,7 @@ mod tests {
         fake.tick_after = Some((0, &[(Register::Seconds, 0x00), (Register::Minutes, 0x35)]));
         assert_eq!(
             Rtc::new(&mut fake).date_time(century),
-            DateTime::new(2026, 11, 26, 12, 35, 0)
+            Ok(DateTime::new(2026, 11, 26, 12, 35, 0).unwrap())
         );
     }
 
@@ -446,7 +459,7 @@ mod tests {
         let before = fake.registers;
         let date_time = DateTime::new(2100, 1, 1, 0, 0, 0).unwrap();
         let result = Rtc::new(&mut fake).set_date_time(date_time, Century::window(2000));
-        assert_eq!(result, Err(YearOutOfWindow));
+        assert_eq!(result, Err(Error::YearOutOfRange));
         assert_eq!(fake.registers, before);
     }
 
@@ -454,7 +467,10 @@ mod tests {
     fn invalid_date_time() {
         let mut fake = Fake::new(0);
         fake.set(Register::Month, 0x13);
-        assert_eq!(Rtc::new(&mut fake).date_time(Century::window(2000)), None);
+        assert_eq!(
+            Rtc::new(&mut fake).date_time(Century::window(2000)),
+            Err(Error::InvalidContents)
+        );
     }
 
     #[test]
@@ -473,7 +489,7 @@ mod tests {
             let mut fake = Fake::new(status_b);
             let mut rtc = Rtc::new(&mut fake);
             rtc.set_alarm(alarm);
-            assert_eq!(rtc.alarm(), Some(alarm));
+            assert_eq!(rtc.alarm(), Ok(alarm));
         }
     }
 
@@ -481,7 +497,7 @@ mod tests {
     fn alarm_invalid() {
         let mut fake = Fake::new(0);
         fake.set(Register::MinutesAlarm, 0x60);
-        assert_eq!(Rtc::new(&mut fake).alarm(), None);
+        assert_eq!(Rtc::new(&mut fake).alarm(), Err(Error::InvalidContents));
     }
 
     #[test]
