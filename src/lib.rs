@@ -345,31 +345,35 @@ mod tests {
     fn date_time_round_trip() {
         let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
         for status_b in [0, StatusB::BINARY | StatusB::HOURS_24] {
-            let mut fake = Fake::new(status_b);
-            let mut rtc = Rtc::new(&mut fake);
-            let century = Century::register(CENTURY).unwrap();
-            rtc.set_date_time(date_time, century).unwrap();
-            assert_eq!(rtc.date_time(century), Some(date_time));
-            assert_eq!(fake.get(Register::StatusB), status_b);
+            for century in [Century::register(CENTURY).unwrap(), Century::window(2000)] {
+                let mut fake = Fake::new(status_b);
+                let mut rtc = Rtc::new(&mut fake);
+                rtc.set_date_time(date_time, century).unwrap();
+                assert_eq!(rtc.date_time(century), Some(date_time));
+                assert_eq!(fake.get(Register::StatusB), status_b);
+            }
         }
     }
 
     #[test]
     fn date_time_layout() {
-        let mut fake = Fake::new(0);
+        // Register numbers and status B bits from the datasheet; PC firmware
+        // sets 0x02, BCD with 24-hour hours. Registers 0x00 to 0x09 hold the
+        // seconds, minutes and hours, each followed by its alarm, then the
+        // day of the week (Thursday is 5, Sunday being 1), day, month and year.
         let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
-        Rtc::new(&mut fake)
-            .set_date_time(date_time, Century::register(CENTURY).unwrap())
-            .unwrap();
-        assert_eq!(fake.get(Register::Seconds), 0x09);
-        assert_eq!(fake.get(Register::Minutes), 0x05);
-        assert_eq!(fake.get(Register::Hours), 0x81);
-        // A Thursday, with Sunday as 1.
-        assert_eq!(fake.get(Register::DayOfWeek), 0x05);
-        assert_eq!(fake.get(Register::DayOfMonth), 0x26);
-        assert_eq!(fake.get(Register::Month), 0x11);
-        assert_eq!(fake.get(Register::Year), 0x26);
-        assert_eq!(fake.registers[usize::from(CENTURY)], 0x20);
+        for (status_b, clock, century) in [
+            (0x00, [9, 0, 5, 0, 0x81, 0, 5, 0x26, 0x11, 0x26], 0x20),
+            (0x02, [9, 0, 5, 0, 0x13, 0, 5, 0x26, 0x11, 0x26], 0x20),
+            (0x04, [9, 0, 5, 0, 0x81, 0, 5, 26, 11, 26], 20),
+        ] {
+            let mut fake = Fake::new(status_b);
+            Rtc::new(&mut fake)
+                .set_date_time(date_time, Century::register(CENTURY).unwrap())
+                .unwrap();
+            assert_eq!(fake.registers[..10], clock);
+            assert_eq!(fake.registers[usize::from(CENTURY)], century);
+        }
     }
 
     #[test]
@@ -397,6 +401,29 @@ mod tests {
             Rtc::new(&mut fake).date_time(century),
             DateTime::new(2026, 11, 26, 12, 35, 0)
         );
+    }
+
+    #[test]
+    fn set_date_time_halts_updates() {
+        // Datasheet values: status B is 0x0b, SET is 0x80, UIE is 0x10 and
+        // 24-hour is 0x02. Setting SET clears UIE, which must come back.
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        let century = Century::register(CENTURY).unwrap();
+        for (status_b, halted, running) in
+            [(0x02, 0x82, 0x02), (0x82, 0x82, 0x02), (0x12, 0x92, 0x12)]
+        {
+            let mut fake = Fake::new(status_b);
+            Rtc::new(&mut fake)
+                .set_date_time(date_time, century)
+                .unwrap();
+            let (first, rest) = fake.writes.split_first().unwrap();
+            let (last, clock) = rest.split_last().unwrap();
+            assert_eq!(*first, (0x0b, halted));
+            assert_eq!(*last, (0x0b, running));
+            let mut written: Vec<u8> = clock.iter().map(|&(register, _)| register).collect();
+            written.sort_unstable();
+            assert_eq!(written, [0x00, 0x02, 0x04, 0x06, 0x07, 0x08, 0x09, CENTURY]);
+        }
     }
 
     #[test]

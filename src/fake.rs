@@ -15,6 +15,8 @@ const STATUS_B: u8 = 0x0b;
 const STATUS_C: u8 = 0x0c;
 const STATUS_D: u8 = 0x0d;
 const UIP: u8 = 0x80;
+const SET: u8 = 0x80;
+const UIE: u8 = 0x10;
 const VRT: u8 = 0x80;
 
 pub struct Fake {
@@ -26,6 +28,8 @@ pub struct Fake {
     /// calendar and alarm registers read 0xff, as the datasheet leaves them
     /// undefined.
     pub updating: u32,
+    /// Every write, in order.
+    pub writes: Vec<(u8, u8)>,
 }
 
 impl Fake {
@@ -39,6 +43,7 @@ impl Fake {
             registers,
             tick_after: None,
             updating: 0,
+            writes: Vec::new(),
         }
     }
 
@@ -82,9 +87,13 @@ impl Bus for Fake {
     }
 
     fn write(&mut self, register: u8, value: u8) {
+        self.writes.push((register, value));
         let index = usize::from(register);
         self.registers[index] = if register == STATUS_A {
             (self.registers[index] & UIP) | (value & !UIP)
+        } else if register == STATUS_B && self.registers[index] & SET == 0 && value & SET != 0 {
+            // "The SET bit going high clears the UIE bit."
+            value & !UIE
         } else {
             value
         };
