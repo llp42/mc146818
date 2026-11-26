@@ -2,7 +2,9 @@ name: Version check
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    # edited: retargeting a PR to main is an edited event, and without it such a PR has no run of this check until
+    # its next push. A title or body edit runs it again too, which is cheap.
+    types: [opened, synchronize, reopened, edited]
     branches: [main]
 
 permissions:

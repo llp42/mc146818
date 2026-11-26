@@ -1,0 +1,41 @@
+name: Test
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: x86_64-unknown-none
+      - run: cargo test --locked
+      # The crate as cargo publish uploads it, built on its own, so that a release cannot fail at the upload.
+      - run: cargo package --locked
+      # no_std: a bare-metal target has no std to link.
+      - run: cargo build --locked --target x86_64-unknown-none
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The rust-version of Cargo.toml, read with the runner's own cargo, so that this job cannot drift from it.
+      - id: msrv
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version // empty')
+          if [[ -z "$version" ]]; then
+            echo "::error::Cargo.toml sets no rust-version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      # The library alone, as the minimum version is promised for it and not for the tests.
+      - run: cargo build --lib --locked

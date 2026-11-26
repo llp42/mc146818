@@ -4,11 +4,10 @@
 
 //! Dates, and the century the chip keeps them in.
 
-use core::error::Error;
 use core::fmt;
 
 use crate::mode::Mode;
-use crate::register::Nvram;
+use crate::{Error, NVRAM};
 
 /// A Gregorian date and time from year 0 to 9999. The chip keeps no time zone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -115,6 +114,54 @@ impl DateTime {
             _ => Weekday::Saturday,
         }
     }
+
+    /// Seconds since 1970-01-01 00:00:00 UTC, negative before, taking `self`
+    /// as UTC. The chip keeps whatever time the machine was set to, often
+    /// local time on PCs that also boot Windows; for such a clock, subtract
+    /// the zone's UTC offset from the result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mc146818::DateTime;
+    ///
+    /// const READ: DateTime = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+    /// // From a clock kept in UTC.
+    /// assert_eq!(READ.unix_timestamp(), 1_795_698_309);
+    /// // From one kept in UTC+1, an hour ahead.
+    /// assert_eq!(READ.unix_timestamp() - 3600, 1_795_694_709);
+    /// ```
+    #[must_use]
+    pub const fn unix_timestamp(self) -> i64 {
+        let seconds = self.hour as i64 * 3600 + self.minute as i64 * 60 + self.second as i64;
+        days_from_civil(self.year, self.month, self.day) * SECONDS_PER_DAY + seconds
+    }
+
+    /// The UTC date and time `timestamp` seconds after 1970-01-01 00:00:00
+    /// UTC, before it if negative; `None` outside year 0 to 9999, which is
+    /// `-62_167_219_200` to `253_402_300_799`. For a clock kept in local
+    /// time, add the zone's UTC offset to `timestamp` first.
+    #[must_use]
+    pub const fn from_unix_timestamp(timestamp: i64) -> Option<Self> {
+        if !matches!(timestamp, FIRST_TIMESTAMP..=LAST_TIMESTAMP) {
+            return None;
+        }
+        let (year, month, day) = civil_from_days(timestamp.div_euclid(SECONDS_PER_DAY));
+        let (hour, minute, second) = time_of_day(timestamp.rem_euclid(SECONDS_PER_DAY));
+        Self::new(year, month, day, hour, minute, second)
+    }
+}
+
+/// ISO 8601 extended format, with a four-digit year and no time zone, since
+/// the chip keeps none: `2026-11-26T13:05:09`.
+impl fmt::Display for DateTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        )
+    }
 }
 
 /// A day of the week.
@@ -157,11 +204,79 @@ const fn is_leap(year: u16) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
+/// 0000-01-01 00:00:00 as a Unix timestamp.
+const FIRST_TIMESTAMP: i64 = -62_167_219_200;
+
+/// 9999-12-31 23:59:59 as a Unix timestamp.
+const LAST_TIMESTAMP: i64 = 253_402_300_799;
+
+/// Unix time counts no leap seconds, and [`DateTime`] has no second 60.
+const SECONDS_PER_DAY: i64 = 86_400;
+
+/// The Gregorian calendar repeats every 400 years, an era.
+const DAYS_PER_ERA: i64 = 146_097;
+
+/// From 0000-03-01, where an era starts, to 1970-01-01.
+const DAYS_TO_1970: i64 = 719_468;
+
+/// Days since 1970-01-01, by Howard Hinnant's `days_from_civil`
+/// (<https://howardhinnant.github.io/date_algorithms.html>). Years start in
+/// March, so that the leap day ends them.
+const fn days_from_civil(year: u16, month: u8, day: u8) -> i64 {
+    let year = year as i64 - (month < 3) as i64;
+    let era = year.div_euclid(400);
+    let year_of_era = year.rem_euclid(400);
+    // 0 for March to 11 for February.
+    let month = (month as i64 + 9) % 12;
+    let day_of_year = (153 * month + 2) / 5 + day as i64 - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * DAYS_PER_ERA + day_of_era - DAYS_TO_1970
+}
+
+/// The year, month and day `days` after 1970-01-01, by Hinnant's
+/// `civil_from_days`, the inverse of [`days_from_civil`], for a day in year
+/// 0 to 9999.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "year 0 to 9999, month 1 to 12 and day 1 to 31"
+)]
+const fn civil_from_days(days: i64) -> (u16, u8, u8) {
+    let days = days + DAYS_TO_1970;
+    let era = days.div_euclid(DAYS_PER_ERA);
+    let day_of_era = days.rem_euclid(DAYS_PER_ERA);
+    // With the leap days so far taken out, each year is 365 days.
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    // 0 for March to 11 for February.
+    let month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month + 2) / 5 + 1;
+    let month = if month < 10 { month + 3 } else { month - 9 };
+    let year = era * 400 + year_of_era + (month < 3) as i64;
+    (year as u16, month as u8, day as u8)
+}
+
+/// The hour, minute and second `seconds` after midnight, for less than a
+/// day.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "hour 0 to 23, minute and second 0 to 59"
+)]
+const fn time_of_day(seconds: i64) -> (u8, u8, u8) {
+    (
+        (seconds / 3600) as u8,
+        (seconds / 60 % 60) as u8,
+        (seconds % 60) as u8,
+    )
+}
+
 /// Where the century of the chip's two-digit year comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Century(Source);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Source {
     Register(u8),
     Window(u16),
@@ -169,11 +284,16 @@ enum Source {
 
 impl Century {
     /// Kept in battery-backed register `index`, as the ACPI FADT `CENTURY`
-    /// field gives it. `None` unless `index` is such a register; the field's
-    /// 0 means there is none.
+    /// field gives it. `None` unless `index` is in [`NVRAM`]; the field's 0
+    /// means there is none.
+    ///
+    /// The register keeps years from 1900 on. As in Linux, a century below 19
+    /// is taken for a register lost or never kept, so reading one fails with
+    /// [`Error::InvalidContents`], and setting a year before 1900 with
+    /// [`Error::YearOutOfRange`].
     #[must_use]
     pub const fn register(index: u8) -> Option<Self> {
-        if matches!(index, Nvram::START..Nvram::END) {
+        if NVRAM.start <= index && index < NVRAM.end {
             Some(Self(Source::Register(index)))
         } else {
             None
@@ -199,17 +319,21 @@ impl Century {
     }
 }
 
-/// The year lies outside the [`Century::window`] in use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct YearOutOfWindow;
-
-impl fmt::Display for YearOutOfWindow {
+/// The register in hex, or the window's first year:
+/// `Century { register: 0x32 }` or `Century { window: 2000 }`.
+impl fmt::Debug for Century {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("year outside the century window")
+        let mut century = f.debug_struct("Century");
+        match self.0 {
+            Source::Register(index) => century.field("register", &format_args!("{index:#04x}")),
+            Source::Window(first) => century.field("window", &first),
+        };
+        century.finish()
     }
 }
 
-impl Error for YearOutOfWindow {}
+/// The lowest century a [`Century::register`] holds when kept.
+const FIRST_CENTURY: u8 = 19;
 
 /// The clock registers, encoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -239,24 +363,22 @@ impl Raw {
         let two_digits = two_digits as u16;
         let year = match century.0 {
             Source::Register(_) => match mode.decode(self.century) {
-                Some(century) => century as u16 * 100 + two_digits,
-                None => return None,
+                Some(century) if century >= FIRST_CENTURY => century as u16 * 100 + two_digits,
+                _ => return None,
             },
             Source::Window(first) => first + (two_digits + 100 - first % 100) % 100,
         };
         DateTime::new(year, month, day, hour, minute, second)
     }
 
-    pub const fn encode(
-        date_time: DateTime,
-        mode: Mode,
-        century: Century,
-    ) -> Result<Self, YearOutOfWindow> {
+    pub const fn encode(date_time: DateTime, mode: Mode, century: Century) -> Result<Self, Error> {
         let year = date_time.year;
         let century = match century.0 {
-            Source::Register(_) => mode.encode(two_digits(year / 100)),
+            Source::Register(_) if year >= FIRST_CENTURY as u16 * 100 => {
+                mode.encode(two_digits(year / 100))
+            }
             Source::Window(first) if first <= year && year < first + 100 => 0,
-            Source::Window(_) => return Err(YearOutOfWindow),
+            Source::Register(_) | Source::Window(_) => return Err(Error::YearOutOfRange),
         };
         Ok(Self {
             second: mode.encode(date_time.second),
@@ -276,9 +398,10 @@ const fn two_digits(value: u16) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Century, DateTime, Raw, Weekday, YearOutOfWindow};
+    use super::{Century, DateTime, Raw, Weekday, days_in_month};
     use crate::mode::Mode;
     use crate::register::StatusB;
+    use crate::{Error, NVRAM};
 
     #[test]
     fn weekday() {
@@ -295,9 +418,114 @@ mod tests {
     }
 
     #[test]
+    fn weekday_every_day() {
+        // Day by day from 2024-01-01, through a leap year and a common one.
+        let mut expected = Weekday::Monday as u8;
+        for year in [2024, 2025] {
+            for month in 1..=12 {
+                for day in 1..=days_in_month(year, month) {
+                    let date_time = DateTime::new(year, month, day, 0, 0, 0).unwrap();
+                    assert_eq!(date_time.weekday() as u8, expected, "{year}-{month}-{day}");
+                    expected = (expected + 1) % 7;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unix_timestamp() {
+        // As `date -u -d @<timestamp>` gives them.
+        for ((year, month, day, hour, minute, second), timestamp) in [
+            ((1970, 1, 1, 0, 0, 0), 0),
+            ((1969, 12, 31, 23, 59, 59), -1),
+            ((2026, 11, 26, 13, 5, 9), 1_795_698_309),
+            ((2000, 2, 29, 0, 0, 0), 951_782_400),
+            ((1900, 3, 1, 0, 0, 0), -2_203_891_200),
+            ((0, 1, 1, 0, 0, 0), -62_167_219_200),
+            ((9999, 12, 31, 23, 59, 59), 253_402_300_799),
+        ] {
+            let date_time = DateTime::new(year, month, day, hour, minute, second).unwrap();
+            assert_eq!(date_time.unix_timestamp(), timestamp, "{date_time:?}");
+            assert_eq!(
+                DateTime::from_unix_timestamp(timestamp),
+                Some(date_time),
+                "{timestamp}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_timestamp_range() {
+        for timestamp in [i64::MIN, -62_167_219_201, 253_402_300_800, i64::MAX] {
+            assert_eq!(
+                DateTime::from_unix_timestamp(timestamp),
+                None,
+                "{timestamp}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_timestamp_every_day() {
+        // Day by day from year 0 to 9999, each 86_400 seconds after the last,
+        // at the first and last second.
+        let check = |date_time: Option<DateTime>, timestamp| {
+            let date_time = date_time.unwrap();
+            assert_eq!(date_time.unix_timestamp(), timestamp, "{date_time:?}");
+            assert_eq!(
+                DateTime::from_unix_timestamp(timestamp),
+                Some(date_time),
+                "{timestamp}"
+            );
+        };
+        let mut midnight = -62_167_219_200;
+        for year in 0..=9999 {
+            for month in 1..=12 {
+                for day in 1..=days_in_month(year, month) {
+                    check(DateTime::new(year, month, day, 0, 0, 0), midnight);
+                    check(
+                        DateTime::new(year, month, day, 23, 59, 59),
+                        midnight + 86_399,
+                    );
+                    midnight += 86_400;
+                }
+            }
+        }
+        assert_eq!(midnight, 253_402_300_800);
+    }
+
+    #[test]
     fn weekday_register() {
         assert_eq!(Weekday::Sunday.register(), 1);
         assert_eq!(Weekday::Saturday.register(), 7);
+    }
+
+    #[test]
+    fn display() {
+        let display = |year, month, day, hour, minute, second| {
+            let date_time = DateTime::new(year, month, day, hour, minute, second).unwrap();
+            date_time.to_string()
+        };
+        assert_eq!(display(2026, 11, 26, 13, 5, 9), "2026-11-26T13:05:09");
+        assert_eq!(display(0, 1, 1, 0, 0, 0), "0000-01-01T00:00:00");
+        assert_eq!(display(987, 2, 3, 4, 5, 6), "0987-02-03T04:05:06");
+        assert_eq!(display(9999, 12, 31, 23, 59, 59), "9999-12-31T23:59:59");
+    }
+
+    #[test]
+    fn accessors() {
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        assert_eq!(
+            (
+                date_time.year(),
+                date_time.month(),
+                date_time.day(),
+                date_time.hour(),
+                date_time.minute(),
+                date_time.second(),
+            ),
+            (2026, 11, 26, 13, 5, 9)
+        );
     }
 
     #[test]
@@ -311,6 +539,12 @@ mod tests {
         assert!(DateTime::new(2026, 1, 0, 0, 0, 0).is_none());
         assert!(DateTime::new(2026, 1, 1, 24, 0, 0).is_none());
         assert!(DateTime::new(10_000, 1, 1, 0, 0, 0).is_none());
+        assert!(DateTime::new(2026, 0, 1, 0, 0, 0).is_none());
+        assert!(DateTime::new(2026, 1, 1, 0, 60, 0).is_none());
+        assert!(DateTime::new(2026, 1, 1, 0, 0, 60).is_none());
+        for month in [6, 9, 11] {
+            assert!(DateTime::new(2026, month, 31, 0, 0, 0).is_none());
+        }
     }
 
     #[test]
@@ -319,6 +553,27 @@ mod tests {
         assert_eq!(Century::register(0x0d), None);
         assert_eq!(Century::register(0x80), None);
         assert_eq!(Century::register(0x32).and_then(Century::index), Some(0x32));
+        // The same registers as the rest of NVRAM.
+        for index in 0..=u8::MAX {
+            let century = Century::register(index);
+            assert_eq!(century.is_some(), NVRAM.contains(&index), "{index:#04x}");
+            assert_eq!(century.and_then(Century::index), century.map(|_| index));
+        }
+    }
+
+    #[test]
+    fn century_debug() {
+        let debug = |century| format!("{century:?}");
+        assert_eq!(
+            debug(Century::register(0x32).unwrap()),
+            "Century { register: 0x32 }"
+        );
+        assert_eq!(
+            debug(Century::register(0x0e).unwrap()),
+            "Century { register: 0x0e }"
+        );
+        assert_eq!(debug(Century::window(2000)), "Century { window: 2000 }");
+        assert_eq!(debug(Century::window(0)), "Century { window: 0 }");
     }
 
     #[test]
@@ -334,6 +589,70 @@ mod tests {
         };
         let date_time = raw.decode(Mode::new(0), Century::register(0x32).unwrap());
         assert_eq!(date_time, DateTime::new(2026, 11, 26, 23, 59, 58));
+    }
+
+    #[test]
+    fn decode_invalid_century() {
+        let raw = Raw {
+            second: 0,
+            minute: 0,
+            hour: 0x12,
+            day: 1,
+            month: 1,
+            year: 0x26,
+            century: 0xff,
+        };
+        assert_eq!(
+            raw.decode(Mode::new(0), Century::register(0x32).unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn decode_lost_century() {
+        // A century below 19, 0 above all, is taken for a lost register.
+        let in_register = Century::register(0x32).unwrap();
+        for (status_b, lost, first) in [
+            (0, [0x00, 0x01, 0x18], 0x19),
+            (StatusB::BINARY, [0, 1, 18], 19),
+        ] {
+            let mode = Mode::new(status_b);
+            let raw = |century| Raw {
+                second: 0,
+                minute: 0,
+                hour: 1,
+                day: 1,
+                month: 1,
+                year: 0,
+                century,
+            };
+            for century in lost {
+                assert_eq!(raw(century).decode(mode, in_register), None);
+            }
+            assert_eq!(
+                raw(first).decode(mode, in_register).map(DateTime::year),
+                Some(1900)
+            );
+        }
+    }
+
+    #[test]
+    fn century_register_range() {
+        // Years before 1900 would read back as a lost century, so they cannot
+        // be set; every later one reads back.
+        let in_register = Century::register(0x32).unwrap();
+        for mode in [Mode::new(0), Mode::new(StatusB::BINARY)] {
+            for year in 0..=9999 {
+                let date_time = DateTime::new(year, 1, 1, 0, 0, 0).unwrap();
+                let raw = Raw::encode(date_time, mode, in_register);
+                if year < 1900 {
+                    assert_eq!(raw, Err(Error::YearOutOfRange), "{year}");
+                } else {
+                    let raw = raw.unwrap();
+                    assert_eq!(raw.decode(mode, in_register), Some(date_time), "{year}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -357,11 +676,19 @@ mod tests {
             raw(79).decode(mode, since_1980).map(DateTime::year),
             Some(2079)
         );
-        let date_time = DateTime::new(2080, 1, 1, 0, 0, 0).unwrap();
-        assert_eq!(
-            Raw::encode(date_time, mode, since_1980),
-            Err(YearOutOfWindow)
-        );
+        let encode = |year| {
+            let date_time = DateTime::new(year, 1, 1, 0, 0, 0).unwrap();
+            Raw::encode(date_time, mode, since_1980).map(|raw| raw.year)
+        };
+        assert_eq!(encode(1979), Err(Error::YearOutOfRange));
+        assert_eq!(encode(1980), Ok(80));
+        assert_eq!(encode(2080), Err(Error::YearOutOfRange));
+    }
+
+    #[test]
+    #[should_panic(expected = "window must end")]
+    fn window_too_late() {
+        let _ = Century::window(9901);
     }
 
     #[test]

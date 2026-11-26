@@ -29,6 +29,9 @@ impl StatusA {
     /// Set from 244 µs before an update cycle until it ends; the clock
     /// registers are unreliable meanwhile.
     pub const UPDATE_IN_PROGRESS: u8 = 0x80;
+    /// DV2 and DV1, which hold the divider chain in reset when both are set.
+    /// DV0 is left out: on AMD it selects a bank instead.
+    pub const DIVIDER_RESET: u8 = 0x60;
     pub const RATE_SELECT: u8 = 0x0f;
 }
 
@@ -46,14 +49,7 @@ impl StatusB {
 pub struct StatusD;
 
 impl StatusD {
-    /// Cleared once the battery runs down.
+    /// VRT: cleared by the power-sense pin going low, set by any read of
+    /// status D.
     pub const VALID: u8 = 0x80;
-}
-
-/// Battery-backed memory: registers `START..END`.
-pub struct Nvram;
-
-impl Nvram {
-    pub const START: u8 = 0x0e;
-    pub const END: u8 = 0x80;
 }

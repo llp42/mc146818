@@ -4,8 +4,10 @@
 
 //! The periodic interrupt rate.
 
+use core::fmt;
+
 /// A rate of the periodic interrupt: a power of two from 2 Hz to 8192 Hz.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeriodicRate(u8);
 
 impl PeriodicRate {
@@ -50,9 +52,30 @@ impl PeriodicRate {
     }
 }
 
+/// The rate in hertz, not the rate-select bits: `PeriodicRate { hz: 128 }`.
+impl fmt::Debug for PeriodicRate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PeriodicRate")
+            .field("hz", &self.hz())
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PeriodicRate;
+
+    #[test]
+    fn debug() {
+        let debug = |hz| format!("{:?}", PeriodicRate::from_hz(hz).unwrap());
+        assert_eq!(debug(128), "PeriodicRate { hz: 128 }");
+        assert_eq!(debug(8192), "PeriodicRate { hz: 8192 }");
+        assert_eq!(debug(2), "PeriodicRate { hz: 2 }");
+        // Selects 1 and 2 give the rates of 8 and 9, and show them.
+        let debug = |select| format!("{:?}", PeriodicRate::from_select(select).unwrap());
+        assert_eq!(debug(1), "PeriodicRate { hz: 256 }");
+        assert_eq!(debug(2), "PeriodicRate { hz: 128 }");
+    }
 
     #[test]
     fn select() {

@@ -121,6 +121,17 @@ mod tests {
     fn encode() {
         let alarm = Alarm::new(Some(13), None, Some(5)).unwrap();
         assert_eq!(alarm.encode(Mode::new(0)), [0x81, 0xff, 0x05]);
+        let any = Alarm::new(None, None, None).unwrap();
+        assert_eq!(any.encode(Mode::new(0)), [0xff; 3]);
+    }
+
+    #[test]
+    fn accessors() {
+        let alarm = Alarm::new(Some(13), Some(30), None).unwrap();
+        assert_eq!(
+            [alarm.hour(), alarm.minute(), alarm.second()],
+            [Some(13), Some(30), None]
+        );
     }
 
     #[test]
