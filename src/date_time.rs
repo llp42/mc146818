@@ -140,6 +140,18 @@ impl DateTime {
     }
 }
 
+/// ISO 8601 extended format, with a four-digit year and no time zone, since
+/// the chip keeps none: `2026-11-26T13:05:09`.
+impl fmt::Display for DateTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        )
+    }
+}
+
 /// A day of the week.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Weekday {
@@ -474,6 +486,18 @@ mod tests {
     fn weekday_register() {
         assert_eq!(Weekday::Sunday.register(), 1);
         assert_eq!(Weekday::Saturday.register(), 7);
+    }
+
+    #[test]
+    fn display() {
+        let display = |year, month, day, hour, minute, second| {
+            let date_time = DateTime::new(year, month, day, hour, minute, second).unwrap();
+            date_time.to_string()
+        };
+        assert_eq!(display(2026, 11, 26, 13, 5, 9), "2026-11-26T13:05:09");
+        assert_eq!(display(0, 1, 1, 0, 0, 0), "0000-01-01T00:00:00");
+        assert_eq!(display(987, 2, 3, 4, 5, 6), "0987-02-03T04:05:06");
+        assert_eq!(display(9999, 12, 31, 23, 59, 59), "9999-12-31T23:59:59");
     }
 
     #[test]
