@@ -4,6 +4,7 @@
 
 //! The chip's interrupt sources.
 
+use core::fmt;
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Sub, SubAssign};
 
 /// A set of interrupt sources.
@@ -11,7 +12,7 @@ use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Sub, SubAssign};
 /// Each bit is both the source's enable in status B and its flag in status C.
 /// A set holds no other bit, so it has no `!`: `Interrupts::ALL - set` is its
 /// complement.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Interrupts(u8);
 
 impl Interrupts {
@@ -114,9 +115,46 @@ impl SubAssign for Interrupts {
     }
 }
 
+/// The sources by name, as in `bitflags`: `Interrupts(PERIODIC | ALARM)`, and
+/// `Interrupts(NONE)` for none.
+impl fmt::Debug for Interrupts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut names = [
+            (Self::PERIODIC, "PERIODIC"),
+            (Self::ALARM, "ALARM"),
+            (Self::UPDATE_ENDED, "UPDATE_ENDED"),
+        ]
+        .into_iter()
+        .filter(|&(source, _)| self.contains(source))
+        .map(|(_, name)| name);
+        f.write_str("Interrupts(")?;
+        f.write_str(names.next().unwrap_or("NONE"))?;
+        for name in names {
+            f.write_str(" | ")?;
+            f.write_str(name)?;
+        }
+        f.write_str(")")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Interrupts;
+
+    #[test]
+    fn debug() {
+        let debug = |set| format!("{set:?}");
+        assert_eq!(debug(Interrupts::NONE), "Interrupts(NONE)");
+        assert_eq!(debug(Interrupts::ALARM), "Interrupts(ALARM)");
+        assert_eq!(
+            debug(Interrupts::UPDATE_ENDED | Interrupts::PERIODIC),
+            "Interrupts(PERIODIC | UPDATE_ENDED)"
+        );
+        assert_eq!(
+            debug(Interrupts::ALL),
+            "Interrupts(PERIODIC | ALARM | UPDATE_ENDED)"
+        );
+    }
 
     #[test]
     fn sets() {
