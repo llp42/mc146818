@@ -575,11 +575,39 @@ mod tests {
     }
 
     #[test]
+    fn before_century_register_leaves_chip() {
+        // 1899 would read back as a lost century.
+        let mut fake = Fake::new(0);
+        let before = fake.registers;
+        let date_time = DateTime::new(1899, 12, 31, 23, 59, 59).unwrap();
+        let century = Century::register(CENTURY).unwrap();
+        let result = Rtc::new(&mut fake).set_date_time(date_time, century);
+        assert_eq!(result, Err(Error::YearOutOfRange));
+        assert_eq!(fake.registers, before);
+    }
+
+    #[test]
     fn invalid_date_time() {
         let mut fake = Fake::new(0);
         fake.set(Register::Month, 0x13);
         assert_eq!(
             Rtc::new(&mut fake).date_time(Century::window(2000)),
+            Err(Error::InvalidContents)
+        );
+    }
+
+    #[test]
+    fn lost_century() {
+        // A century register cleared, or never kept, holds no date.
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        let century = Century::register(CENTURY).unwrap();
+        Rtc::new(&mut fake)
+            .set_date_time(date_time, century)
+            .unwrap();
+        fake.registers[usize::from(CENTURY)] = 0;
+        assert_eq!(
+            Rtc::new(&mut fake).date_time(century),
             Err(Error::InvalidContents)
         );
     }

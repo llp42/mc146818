@@ -169,6 +169,11 @@ impl Century {
     /// Kept in battery-backed register `index`, as the ACPI FADT `CENTURY`
     /// field gives it. `None` unless `index` is such a register; the field's
     /// 0 means there is none.
+    ///
+    /// The register keeps years from 1900 on. As in Linux, a century below 19
+    /// is taken for a register lost or never kept, so reading one fails with
+    /// [`Error::InvalidContents`], and setting a year before 1900 with
+    /// [`Error::YearOutOfRange`].
     #[must_use]
     pub const fn register(index: u8) -> Option<Self> {
         if matches!(index, Nvram::START..Nvram::END) {
@@ -196,6 +201,9 @@ impl Century {
         }
     }
 }
+
+/// The lowest century a [`Century::register`] holds when kept.
+const FIRST_CENTURY: u8 = 19;
 
 /// The clock registers, encoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,8 +233,8 @@ impl Raw {
         let two_digits = two_digits as u16;
         let year = match century.0 {
             Source::Register(_) => match mode.decode(self.century) {
-                Some(century) => century as u16 * 100 + two_digits,
-                None => return None,
+                Some(century) if century >= FIRST_CENTURY => century as u16 * 100 + two_digits,
+                _ => return None,
             },
             Source::Window(first) => first + (two_digits + 100 - first % 100) % 100,
         };
@@ -236,9 +244,11 @@ impl Raw {
     pub const fn encode(date_time: DateTime, mode: Mode, century: Century) -> Result<Self, Error> {
         let year = date_time.year;
         let century = match century.0 {
-            Source::Register(_) => mode.encode(two_digits(year / 100)),
+            Source::Register(_) if year >= FIRST_CENTURY as u16 * 100 => {
+                mode.encode(two_digits(year / 100))
+            }
             Source::Window(first) if first <= year && year < first + 100 => 0,
-            Source::Window(_) => return Err(Error::YearOutOfRange),
+            Source::Register(_) | Source::Window(_) => return Err(Error::YearOutOfRange),
         };
         Ok(Self {
             second: mode.encode(date_time.second),
@@ -371,6 +381,53 @@ mod tests {
             raw.decode(Mode::new(0), Century::register(0x32).unwrap()),
             None
         );
+    }
+
+    #[test]
+    fn decode_lost_century() {
+        // A century below 19, 0 above all, is taken for a lost register.
+        let in_register = Century::register(0x32).unwrap();
+        for (status_b, lost, first) in [
+            (0, [0x00, 0x01, 0x18], 0x19),
+            (StatusB::BINARY, [0, 1, 18], 19),
+        ] {
+            let mode = Mode::new(status_b);
+            let raw = |century| Raw {
+                second: 0,
+                minute: 0,
+                hour: 1,
+                day: 1,
+                month: 1,
+                year: 0,
+                century,
+            };
+            for century in lost {
+                assert_eq!(raw(century).decode(mode, in_register), None);
+            }
+            assert_eq!(
+                raw(first).decode(mode, in_register).map(DateTime::year),
+                Some(1900)
+            );
+        }
+    }
+
+    #[test]
+    fn century_register_range() {
+        // Years before 1900 would read back as a lost century, so they cannot
+        // be set; every later one reads back.
+        let in_register = Century::register(0x32).unwrap();
+        for mode in [Mode::new(0), Mode::new(StatusB::BINARY)] {
+            for year in 0..=9999 {
+                let date_time = DateTime::new(year, 1, 1, 0, 0, 0).unwrap();
+                let raw = Raw::encode(date_time, mode, in_register);
+                if year < 1900 {
+                    assert_eq!(raw, Err(Error::YearOutOfRange), "{year}");
+                } else {
+                    let raw = raw.unwrap();
+                    assert_eq!(raw.decode(mode, in_register), Some(date_time), "{year}");
+                }
+            }
+        }
     }
 
     #[test]
