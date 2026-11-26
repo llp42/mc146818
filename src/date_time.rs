@@ -119,6 +119,18 @@ impl DateTime {
     /// as UTC. The chip keeps whatever time the machine was set to, often
     /// local time on PCs that also boot Windows; for such a clock, subtract
     /// the zone's UTC offset from the result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mc146818::DateTime;
+    ///
+    /// const READ: DateTime = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+    /// // From a clock kept in UTC.
+    /// assert_eq!(READ.unix_timestamp(), 1_795_698_309);
+    /// // From one kept in UTC+1, an hour ahead.
+    /// assert_eq!(READ.unix_timestamp() - 3600, 1_795_694_709);
+    /// ```
     #[must_use]
     pub const fn unix_timestamp(self) -> i64 {
         let seconds = self.hour as i64 * 3600 + self.minute as i64 * 60 + self.second as i64;
