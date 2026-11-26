@@ -390,6 +390,19 @@ mod tests {
     }
 
     #[test]
+    fn set_date_time_ends_update() {
+        // The clock registers drop writes during an update, which setting SET
+        // ends, so it has to come first.
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        fake.updating = 3;
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        let century = Century::register(CENTURY).unwrap();
+        let mut rtc = Rtc::new(&mut fake);
+        rtc.set_date_time(date_time, century).unwrap();
+        assert_eq!(rtc.date_time(century), Some(date_time));
+    }
+
+    #[test]
     fn date_time_rereads_torn_time() {
         // The clock goes from 12:34:59 to 12:35:00 right after the seconds are
         // read, so the minutes read next are already the new ones.

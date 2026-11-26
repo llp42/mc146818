@@ -26,7 +26,7 @@ pub struct Fake {
     pub tick_after: Option<(u32, &'static [(Register, u8)])>,
     /// Reads of status A that find an update in progress. Meanwhile the time,
     /// calendar and alarm registers read 0xff, as the datasheet leaves them
-    /// undefined.
+    /// undefined, and drop writes, as some chipsets do. Setting SET ends it.
     pub updating: u32,
     /// Every write, in order.
     pub writes: Vec<(u8, u8)>,
@@ -88,6 +88,14 @@ impl Bus for Fake {
 
     fn write(&mut self, register: u8, value: u8) {
         self.writes.push((register, value));
+        if self.updating > 0 && register < STATUS_A {
+            return;
+        }
+        if register == STATUS_B && value & SET != 0 {
+            // SET "inhibits any update cycle and then clears the UIP status
+            // bit."
+            self.updating = 0;
+        }
         let index = usize::from(register);
         self.registers[index] = if register == STATUS_A {
             (self.registers[index] & UIP) | (value & !UIP)
