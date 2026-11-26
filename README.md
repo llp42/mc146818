@@ -2,11 +2,14 @@
 
 A `no_std` driver for the MC146818 real-time clock and its battery-backed memory: the CMOS clock of PCs.
 
-- Periodic, alarm and update-ended interrupts, with the periodic rate and the alarm readable back.
 - Date and time in BCD or binary, 12- or 24-hour mode, with the century from a register (the ACPI FADT `CENTURY`
   field) or a fixed window. Setting the time also sets the day of the week, which the chip does not work out.
+- Conversion of the date and time to and from Unix timestamps, and display in ISO 8601.
+- Periodic, alarm and update-ended interrupts, with the periodic rate and the alarm readable back.
 - Waiting for the next second, to calibrate other clocks against it.
-- The battery-backed memory after the clock registers.
+- The battery-backed memory after the clock registers, by register number, a byte or a run of registers at a time.
+- The time and the alarm read, and the alarm written, between the chip's updates, as Linux does. Each wait gives up
+  after a bounded number of reads with an `Error`, and waiting for the next second fails at once on a halted clock.
 
 The chip is reached through a `Bus` the caller implements (on PCs, I/O ports `0x70` and `0x71`), so the crate has no
 dependencies, contains no `unsafe` code and its tests run on the host.
