@@ -351,6 +351,22 @@ impl<B: Bus> Rtc<B> {
         }
     }
 
+    /// Writes `buf` to consecutive battery-backed registers, `start` first,
+    /// numbered as for [`Self::read_cmos`]. Like [`Self::write_cmos`], it can
+    /// overwrite bytes the firmware owns.
+    ///
+    /// # Panics
+    ///
+    /// If the registers `start..start + buf.len()` do not lie in [`NVRAM`],
+    /// before any is written. They are bounded as a subslice is: an empty
+    /// `buf` writes nothing, and `start` may then be `NVRAM.end` too.
+    pub fn write_cmos_from(&mut self, start: u8, buf: &[u8]) {
+        check_nvram_range(start, buf.len());
+        for (&byte, register) in buf.iter().zip(start..) {
+            self.bus.write(register, byte);
+        }
+    }
+
     fn read(&mut self, register: Register) -> u8 {
         self.bus.read(register as u8)
     }
@@ -884,6 +900,61 @@ mod tests {
             assert!(read.is_err(), "{start:#04x} {len}");
             assert_eq!(fake.reads, [], "{start:#04x} {len}");
             assert_eq!(buf, vec![0x55; len], "{start:#04x} {len}");
+        }
+    }
+
+    #[test]
+    fn write_cmos_from() {
+        // As read_cmos_into reads them: each register written once and in
+        // order, and no other.
+        for (start, len) in [(0x0e, NVRAM.len()), (0x0e, 2), (0x7e, 2), (0x7f, 1)] {
+            let mut fake = Fake::new(0);
+            let mut expected = fake.registers;
+            let registers: Vec<u8> = (start..).take(len).collect();
+            let buf: Vec<u8> = registers.iter().map(|register| !register).collect();
+            Rtc::new(&mut fake).write_cmos_from(start, &buf);
+            for (&register, &byte) in registers.iter().zip(&buf) {
+                expected[usize::from(register)] = byte;
+            }
+            assert_eq!(fake.registers, expected, "{start:#04x}");
+            let writes: Vec<(u8, u8)> = registers.into_iter().zip(buf).collect();
+            assert_eq!(fake.writes, writes, "{start:#04x}");
+        }
+    }
+
+    #[test]
+    fn write_cmos_from_nothing() {
+        for start in [0x0e, 0x7f, 0x80] {
+            let mut fake = Fake::new(0);
+            Rtc::new(&mut fake).write_cmos_from(start, &[]);
+            assert_eq!(fake.writes, [], "{start:#04x}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "registers 0x0d..0x0f run outside NVRAM")]
+    fn write_cmos_from_below_nvram() {
+        Rtc::new(Fake::new(0)).write_cmos_from(0x0d, &[0; 2]);
+    }
+
+    #[test]
+    #[should_panic(expected = "registers 0x7f..0x81 run outside NVRAM")]
+    fn write_cmos_from_above_nvram() {
+        Rtc::new(Fake::new(0)).write_cmos_from(0x7f, &[0; 2]);
+    }
+
+    #[test]
+    fn write_cmos_from_outside_nvram_writes_nothing() {
+        // Nor is NVRAM left half written.
+        for (start, len) in OUTSIDE_NVRAM {
+            let mut fake = numbered_nvram();
+            let before = fake.registers;
+            let write = catch_unwind(AssertUnwindSafe(|| {
+                Rtc::new(&mut fake).write_cmos_from(start, &vec![0x55; len]);
+            }));
+            assert!(write.is_err(), "{start:#04x} {len}");
+            assert_eq!(fake.writes, [], "{start:#04x} {len}");
+            assert_eq!(fake.registers, before, "{start:#04x} {len}");
         }
     }
 
