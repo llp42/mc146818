@@ -75,20 +75,19 @@ What chips and chipsets add beyond the MC146818, but for the century:
 
 ## Development
 
-CI runs these checks on each PR, with these flags:
+CI runs these checks on each PR:
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --locked
 cargo test --locked
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo doc --no-deps --locked
 cargo build --locked --target x86_64-unknown-none
 ```
 
-`Cargo.toml` denies Clippy's lints, its default, pedantic and nursery groups, so `cargo clippy` fails on any of them.
-It only warns on `missing_docs`, a compiler lint, so that a newer toolchain, on docs.rs or with the crate as a path
-dependency, still builds. CI denies that warning too, through the `-D warnings` above, on the toolchain pinned in
-`.github/actions/setup-rust`. The last check needs its target: `rustup target add x86_64-unknown-none`.
+`Cargo.toml` denies every warning, `missing_docs` and Clippy's pedantic and nursery groups included, so these checks
+need no flags. CI runs them on the toolchain pinned in `.github/actions/setup-rust`. The last check needs its
+target: `rustup target add x86_64-unknown-none`.
 
 CI also packages the crate, builds the library on Rust 1.99, the minimum, and lints the Markdown with markdownlint-cli2.
 

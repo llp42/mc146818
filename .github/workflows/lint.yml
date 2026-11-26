@@ -26,8 +26,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
-      # Cargo.toml denies Clippy's lints; -D warnings denies the compiler's too, missing_docs included.
-      - run: cargo clippy --all-targets --locked -- -D warnings
+      # The lint levels, pedantic and nursery included, are in Cargo.toml.
+      - run: cargo clippy --all-targets --locked
 
   fmt:
     runs-on: ubuntu-latest
@@ -45,5 +45,3 @@ jobs:
       - uses: ./.github/actions/setup-rust
       # A broken intra-doc link or a missing doc fails the build.
       - run: cargo doc --no-deps --locked
-        env:
-          RUSTDOCFLAGS: -D warnings

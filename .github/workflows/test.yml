@@ -37,6 +37,5 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
-      # The library alone, as the minimum version is promised for it and not for the tests. Warnings are left to the
-      # pinned toolchain: an older one can raise some that a newer one has dropped.
+      # The library alone, as the minimum version is promised for it and not for the tests.
       - run: cargo build --lib --locked
