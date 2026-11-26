@@ -224,12 +224,8 @@ impl<B: Bus> Rtc<B> {
     /// [`Error::NotResponding`] if the chip never leaves an update, and
     /// [`Error::InvalidContents`] if it holds no date and time.
     pub fn date_time(&mut self, century: Century) -> Result<DateTime, Error> {
-        let raw = self.between_updates(UPDATE_TRIES, |rtc, _| {
-            // Two reads must agree too, in case a stall of a minute or more
-            // slips past the checks around them.
-            let raw = rtc.read_raw(century);
-            (rtc.read_raw(century) == raw).then_some(raw)
-        })?;
+        // A read an update tore fails the checks after it, as in Linux.
+        let raw = self.between_updates(UPDATE_TRIES, |rtc, _| Some(rtc.read_raw(century)))?;
         raw.decode(self.mode(), century)
             .ok_or(Error::InvalidContents)
     }
@@ -497,16 +493,24 @@ mod tests {
     #[test]
     fn date_time_rereads_torn_time() {
         // The clock goes from 12:34:59 to 12:35:00 right after the seconds are
-        // read, so the minutes read next are already the new ones.
-        let mut fake = Fake::new(StatusB::HOURS_24);
-        let century = Century::register(CENTURY).unwrap();
-        let before = DateTime::new(2026, 11, 26, 12, 34, 59).unwrap();
-        Rtc::new(&mut fake).set_date_time(before, century).unwrap();
-        fake.tick_after = Some((0, &[(Register::Seconds, 0x00), (Register::Minutes, 0x35)]));
-        assert_eq!(
-            Rtc::new(&mut fake).date_time(century),
-            Ok(DateTime::new(2026, 11, 26, 12, 35, 0).unwrap())
-        );
+        // read, so the minutes read next are already the new ones. The checks
+        // before the read catch a tick after their first read of the seconds;
+        // only those after it catch one after the third, the read's own.
+        for reads in [0, 2] {
+            let mut fake = Fake::new(StatusB::HOURS_24);
+            let century = Century::register(CENTURY).unwrap();
+            let before = DateTime::new(2026, 11, 26, 12, 34, 59).unwrap();
+            Rtc::new(&mut fake).set_date_time(before, century).unwrap();
+            fake.tick_after = Some((
+                reads,
+                &[(Register::Seconds, 0x00), (Register::Minutes, 0x35)],
+            ));
+            assert_eq!(
+                Rtc::new(&mut fake).date_time(century),
+                Ok(DateTime::new(2026, 11, 26, 12, 35, 0).unwrap()),
+                "{reads}"
+            );
+        }
     }
 
     #[test]
