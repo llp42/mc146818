@@ -391,6 +391,23 @@ impl<B: Bus> Rtc<B> {
     /// If the registers `start..start + buf.len()` do not lie in [`NVRAM`],
     /// before any is read. They are bounded as a subslice is: an empty `buf`
     /// reads nothing, and `start` may then be `NVRAM.end` too.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # struct Cmos([u8; 128]);
+    /// # impl mc146818::Bus for Cmos {
+    /// #     fn read(&mut self, r: u8) -> u8 { self.0[usize::from(r)] }
+    /// #     fn write(&mut self, r: u8, v: u8) { self.0[usize::from(r)] = v }
+    /// # }
+    /// # let mut rtc = mc146818::Rtc::new(Cmos([0x55; 128]));
+    /// use mc146818::NVRAM;
+    ///
+    /// // Every battery-backed byte, each at its register number.
+    /// let mut cmos = [0; 0x80];
+    /// rtc.read_cmos_into(NVRAM.start, &mut cmos[usize::from(NVRAM.start)..]);
+    /// # assert_eq!((cmos[0x0d], cmos[0x0e], cmos[0x7f]), (0, 0x55, 0x55));
+    /// ```
     pub fn read_cmos_into(&mut self, start: u8, buf: &mut [u8]) {
         check_nvram_range(start, buf.len());
         for (byte, register) in buf.iter_mut().zip(start..) {
