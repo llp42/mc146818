@@ -373,6 +373,33 @@ mod tests {
     }
 
     #[test]
+    fn date_time_waits_out_update() {
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        let date_time = DateTime::new(2026, 11, 26, 13, 5, 9).unwrap();
+        let century = Century::register(CENTURY).unwrap();
+        Rtc::new(&mut fake)
+            .set_date_time(date_time, century)
+            .unwrap();
+        fake.updating = 3;
+        assert_eq!(Rtc::new(&mut fake).date_time(century), Some(date_time));
+    }
+
+    #[test]
+    fn date_time_rereads_torn_time() {
+        // The clock goes from 12:34:59 to 12:35:00 right after the seconds are
+        // read, so the minutes read next are already the new ones.
+        let mut fake = Fake::new(StatusB::HOURS_24);
+        let century = Century::register(CENTURY).unwrap();
+        let before = DateTime::new(2026, 11, 26, 12, 34, 59).unwrap();
+        Rtc::new(&mut fake).set_date_time(before, century).unwrap();
+        fake.tick_after = Some((0, &[(Register::Seconds, 0x00), (Register::Minutes, 0x35)]));
+        assert_eq!(
+            Rtc::new(&mut fake).date_time(century),
+            DateTime::new(2026, 11, 26, 12, 35, 0)
+        );
+    }
+
+    #[test]
     fn out_of_window_leaves_chip() {
         let mut fake = Fake::new(0);
         let before = fake.registers;

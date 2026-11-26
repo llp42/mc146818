@@ -22,6 +22,10 @@ pub struct Fake {
     /// The clock ticking mid-read: once the seconds register has been read
     /// that many more times, the next read of it is followed by these writes.
     pub tick_after: Option<(u32, &'static [(Register, u8)])>,
+    /// Reads of status A that find an update in progress. Meanwhile the time,
+    /// calendar and alarm registers read 0xff, as the datasheet leaves them
+    /// undefined.
+    pub updating: u32,
 }
 
 impl Fake {
@@ -34,6 +38,7 @@ impl Fake {
         Self {
             registers,
             tick_after: None,
+            updating: 0,
         }
     }
 
@@ -49,7 +54,15 @@ impl Fake {
 impl Bus for Fake {
     fn read(&mut self, register: u8) -> u8 {
         let index = usize::from(register);
-        let value = self.registers[index];
+        let mut value = self.registers[index];
+        if self.updating > 0 {
+            if register == STATUS_A {
+                self.updating -= 1;
+                value |= UIP;
+            } else if register < STATUS_A {
+                value = 0xff;
+            }
+        }
         if register == STATUS_C {
             self.registers[index] = 0;
         }
