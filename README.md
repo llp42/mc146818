@@ -20,7 +20,8 @@ The firmware normally sets up the following before the kernel runs. The driver l
 no way to change it:
 
 - The oscillator and divider chain (`DV2` to `DV0` of status A): the driver neither starts the oscillator nor selects
-  the time base.
+  the time base. Nor does it reset the divider while it sets the time, so the first update after `set_date_time` comes
+  anywhere within the next second: the time set is good to about a second.
 - The square-wave output and daylight-saving enables (`SQWE` and `DSE` of status B), which PCs do not use.
 - The data mode, binary or BCD and 12- or 24-hour: the driver reads it from status B on each access and follows it.
 
